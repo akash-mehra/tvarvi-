@@ -1,0 +1,17 @@
+{
+  "name": "tvarvi",
+  "private": true,
+  "description": "Content workflow: writer → admin → reviewer → AI social posts → publish",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning server.js",
+    "create-admin": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning server.js create-admin",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0"
+  }
+}
