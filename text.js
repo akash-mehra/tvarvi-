@@ -10,6 +10,7 @@ export const CHANNELS = {
   x: { label: 'X (Twitter)', max: 280 },
 };
 export const SOCIAL = ['instagram', 'linkedin', 'x'];
+export const KNOWLEDGE_KINDS = { brand_rule: 'Brand rule', compliance_rule: 'Compliance rule', example: 'Example' };
 
 // X counts emoji and most non-Latin characters as 2. This errs on the long side, never the short.
 export function xLength(text) {
@@ -95,6 +96,64 @@ export function lineDiff(before, after) {
   }
   return [...same(a.slice(0, start)), ...middle, ...same(a.slice(a.length - end))];
 }
+
+// Only changed lines plus a little context, capped, for diffs of long web pages.
+export function compactDiff(rows, context = 1, max = 300) {
+  const keep = new Set();
+  rows.forEach(([type], i) => {
+    if (type !== 'same') for (let j = i - context; j <= i + context; j++) keep.add(j);
+  });
+  const out = [];
+  let skipped = false;
+  rows.forEach((row, i) => {
+    if (keep.has(i)) {
+      if (skipped) out.push(['gap', '…']);
+      out.push(row);
+      skipped = false;
+    } else {
+      skipped = true;
+    }
+  });
+  return out.slice(0, max);
+}
+
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const BLOCK_TAGS = /<\/?(?:br|p|div|li|ul|ol|h[1-6]|tr|table|section|article|header|footer|main|blockquote|pre|dd|dt)\b[^>]*>/gi;
+
+// Web page HTML → plain text for compliance snapshots. The result is data only and is never rendered as HTML.
+export function htmlToText(html) {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style|noscript|svg|template|iframe|head)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(BLOCK_TAGS, '\n')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/gi, (entity, code) => {
+      if (code[0] !== '#') return NAMED_ENTITIES[code.toLowerCase()] ?? entity;
+      const point = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : Number(code.slice(1));
+      return point > 0 && point <= 0x10ffff && (point < 0xd800 || point > 0xdfff) ? String.fromCodePoint(point) : ' ';
+    })
+    .replace(/[ \t\f\v\r ]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n+/g, '\n') // one line per block, so snapshot diffs are line-by-line
+    .trim();
+}
+
+// Comparable form of a rule or suggestion: lowercase words only.
+export const normText = (text) =>
+  String(text).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+// Near-duplicate check on normalized text: same words (Jaccard ≥ 0.8) or one contains the other.
+export function isNearDuplicate(a, b) {
+  if (!a || !b) return false;
+  if (a === b || (a.length > 20 && b.length > 20 && (a.includes(b) || b.includes(a)))) return true;
+  const x = new Set(a.split(' '));
+  const y = new Set(b.split(' '));
+  let shared = 0;
+  for (const word of x) if (y.has(word)) shared++;
+  return shared / (x.size + y.size - shared) >= 0.8;
+}
+
+export const clip = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 export function slugify(title, id) {
   const base = title

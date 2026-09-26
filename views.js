@@ -1,5 +1,5 @@
 import { isDryRun } from './publish.js';
-import { CHANNELS, esc, lineDiff, postLength, textToHtml } from './text.js';
+import { CHANNELS, clip, compactDiff, esc, KNOWLEDGE_KINDS, lineDiff, postLength, SOCIAL, textToHtml } from './text.js';
 
 // Every interpolated value is escaped unless it is itself html`` output or wrapped in raw().
 class Safe {
@@ -44,10 +44,25 @@ const EVENT = {
   published: 'published',
   publish_failed: 'publishing failed',
   completed: 'everything is published',
+  tool_call: 'AI tool call',
+  promoted: 'promoted a post to an example',
+  metrics: 'recorded engagement',
 };
 const FLAG_LABELS = { can_write: 'Writer', can_review: 'Reviewer', can_publish: 'Can publish', is_admin: 'Admin' };
+const INPUT_KINDS = { rule: 'Rule', example: 'Example', post: 'Top post', snapshot: 'Compliance page', web: 'Web page', article: 'Past article' };
+const platformName = (platform) => (platform ? CHANNELS[platform].label : 'All platforms');
+const isHttp = (url) => /^https?:\/\//i.test(url ?? '');
 
 const badge = (status) => html`<span class="badge ${status}">${STATUS[status] ?? status}</span>`;
+// Status pill for rules, sources, snapshots, suggestions and digests; `tone` picks the colour.
+const pill = (text, tone = '') => html`<span class="badge ${tone}">${text}</span>`;
+const TONE = { active: 'ready', approved: 'ready', accepted: 'ready', edited: 'ready', done: 'ready', pending: 'generating', running: 'generating', skipped: 'simulated', rejected: 'failed', failed: 'failed', inactive: '', dismissed: '', superseded: '' };
+const statusPill = (status) => pill(status[0].toUpperCase() + status.slice(1), TONE[status] ?? '');
+
+// rows from lineDiff/compactDiff → green added, red removed lines.
+const renderDiff = (rows) =>
+  html`<div class="diff">${rows.map(([type, line]) =>
+    type === 'add' ? html`<ins>${line}</ins>` : type === 'del' ? html`<del>${line}</del>` : type === 'gap' ? html`<div class="gap">…</div>` : html`<div>${line}</div>`)}</div>`;
 
 function layout(title, user, body, { refresh } = {}) {
   return html`<!doctype html>
@@ -64,7 +79,7 @@ ${refresh ? html`<meta http-equiv="refresh" content="${refresh}">` : ''}
   <a class="brand" href="/">Tvarvi</a>
   ${user
     ? html`<nav>
-    ${user.is_admin ? html`<a href="/users">Team</a>` : ''}
+    ${user.is_admin ? html`<a href="/training">Training</a> <a href="/sources">Sources</a> <a href="/suggestions">Suggestions</a> <a href="/users">Team</a>` : ''}
     <a href="/account">${user.name}</a>
     <form method="post" action="/logout"><button class="link">Log out</button></form>
   </nav>`
@@ -108,8 +123,11 @@ ${rows.length
 }
 
 export function dashboardPage(user, lists) {
+  const { suggestions = 0, snapshots = 0 } = lists.attention ?? {};
   return layout('Dashboard', user, html`
 <h1>Dashboard</h1>
+${suggestions ? html`<p class="note"><a href="/suggestions">${suggestions} suggestion${suggestions === 1 ? '' : 's'} to improve the AI agents</a> ${suggestions === 1 ? 'is' : 'are'} waiting for a decision.</p>` : ''}
+${snapshots ? html`<p class="note"><a href="/sources">${snapshots} changed compliance page${snapshots === 1 ? '' : 's'}</a> ${snapshots === 1 ? 'needs' : 'need'} approval before the compliance agent uses ${snapshots === 1 ? 'it' : 'them'}.</p>` : ''}
 ${user.is_admin ? html`<section>${articleTable('Needs a reviewer', lists.queue)}${articleTable('In progress', lists.inProgress)}</section>` : ''}
 ${user.can_review ? html`<section>${articleTable('Assigned to me', lists.reviews)}</section>` : ''}
 ${user.can_publish ? html`<section>${articleTable('Waiting for a publisher', lists.publishing)}</section>` : ''}
@@ -129,14 +147,11 @@ ${user.can_write
     : ''}`);
 }
 
-function diffView(a) {
-  const rows = [
+const diffView = (a) =>
+  renderDiff([
     ...(a.base_title !== a.title ? [['del', `Title: ${a.base_title}`], ['add', `Title: ${a.title}`]] : []),
     ...lineDiff(a.base_body, a.body),
-  ];
-  return html`<div class="diff">${rows.map(([type, line]) =>
-    type === 'add' ? html`<ins>${line}</ins>` : type === 'del' ? html`<del>${line}</del>` : html`<div>${line}</div>`)}</div>`;
-}
+  ]);
 
 function assignPanel(a, reviewers) {
   const changed = a.status === 'returned' && (a.base_title !== a.title || a.base_body !== a.body);
@@ -180,9 +195,32 @@ const reviewForm = (a) => html`<form method="post" action="/articles/${a.id}" cl
 
 const EDITABLE = ['draft', 'failed', 'ready', 'publish_failed'];
 
-function itemCard(item, perm) {
+// What the AI used for this post: rule and example versions, compliance page versions, web pages, past articles.
+function inputLine(input, user) {
+  const kind = html`<span class="kind">${INPUT_KINDS[input.kind]}</span>`;
+  if ((input.kind === 'rule' || input.kind === 'example') && input.knowledge_id && user.is_admin) {
+    return html`${kind} <a href="/knowledge/${input.knowledge_id}">${input.label}</a>`;
+  }
+  if (input.kind === 'web' && isHttp(input.label)) return html`${kind} <a href="${input.label}" target="_blank" rel="noopener noreferrer">${input.label}</a>`;
+  if (input.kind === 'article' && input.ref_id) return html`${kind} <a href="/articles/${input.ref_id}">${input.label}</a>`;
+  return html`${kind} ${input.label}`;
+}
+
+function metricsForm(item) {
+  const m = item.metrics;
+  return html`<form method="post" action="/items/${item.id}" class="metrics">
+    <input type="hidden" name="action" value="metrics">
+    ${[['likes', 'Likes'], ['shares', 'Shares'], ['reach', 'Reach'], ['saves', 'Saves']].map(([name, text]) =>
+      html`<label>${text} <input type="number" name="${name}" min="0" max="1000000000000" step="1" value="${m?.[name] ?? ''}"></label>`)}
+    <button class="secondary">Save engagement</button>
+    ${m ? html`<span class="muted">Last updated ${m.recorded_at} UTC</span>` : ''}
+  </form>`;
+}
+
+function itemCard(item, perm, user) {
   const { label, max } = CHANNELS[item.channel];
   const editable = perm.editItems && item.channel !== 'website' && EDITABLE.includes(item.status);
+  const social = SOCIAL.includes(item.channel);
   return html`<section class="card">
   <header><h3>${label}</h3> ${badge(item.status)}${item.simulated ? html` <span class="badge simulated">Simulated</span>` : ''}</header>
   ${item.error ? html`<p class="error">${item.error}</p>` : ''}
@@ -217,6 +255,19 @@ function itemCard(item, perm) {
     <button name="action" value="publish">${item.status === 'publish_failed' ? 'Retry publishing' : 'Publish'} to ${label}${isDryRun(item.channel) ? ' (simulated)' : ''}</button>
   </form>`
     : ''}
+  ${item.ai_draft && item.ai_draft !== item.body
+    ? html`<details><summary>The AI's original draft (changed by the reviewer)</summary>${renderDiff(lineDiff(item.ai_draft, item.body))}</details>`
+    : ''}
+  ${item.inputs?.length
+    ? html`<details><summary>Sources used (${item.inputs.length})</summary>
+    <ul class="inputs">${item.inputs.map((input) => html`<li>${inputLine(input, user)}</li>`)}</ul></details>`
+    : ''}
+  ${perm.metrics && social && item.status === 'published' ? metricsForm(item) : ''}
+  ${perm.promote && social && ['ready', 'published'].includes(item.status)
+    ? item.promoted
+      ? html`<p class="muted">This post is an approved example (<a href="/knowledge/${item.promoted}">view</a>).</p>`
+      : html`<form method="post" action="/items/${item.id}"><button name="action" value="promote" class="secondary">Promote to example</button></form>`
+    : ''}
 </section>`;
 }
 
@@ -244,7 +295,7 @@ ${simulated.length ? html`<p class="note">Trial mode: publishing to ${simulated.
   </form>`
       : ''}
 </div>
-<div class="items">${items.map((item) => itemCard(item, perm))}</div>`
+<div class="items">${items.map((item) => itemCard(item, perm, user))}</div>`
     : ''}
 <h2>History</h2>
 <ol class="timeline">${events.map((e) => html`
@@ -298,3 +349,191 @@ ${message ? html`<p class="ok">${message}</p>` : ''}
   <label>Repeat the new password <input type="password" name="confirm" required minlength="12" maxlength="200" autocomplete="new-password"></label>
   <button>Change password</button>
 </form>`);
+
+// ---------- admin: agent training ----------
+
+const money = (usd) => (usd < 0.01 && usd > 0 ? '<$0.01' : `$${usd.toFixed(2)}`);
+const n = (value) => Number(value ?? 0).toLocaleString('en-US');
+
+const entryFields = (kind, values = {}) => html`
+  <label>Title (optional) <input name="title" maxlength="100" value="${values.title ?? ''}"></label>
+  <label>Text <textarea name="text" rows="${kind === 'example' ? 8 : 4}" required maxlength="5000">${values.text ?? ''}</textarea></label>
+  ${kind === 'example'
+    ? html`<div class="metrics">${[['likes', 'Likes'], ['shares', 'Shares'], ['reach', 'Reach']].map(([name, text]) =>
+      html`<label>${text} <input type="number" name="${name}" min="0" max="1000000000000" step="1" value="${values[name] ?? ''}"></label>`)}</div>`
+    : ''}`;
+
+function entryList(entries) {
+  return entries.length
+    ? html`<div class="entries">${entries.map((e) => html`
+  <div class="entry${e.active ? '' : ' inactive'}">
+    <div><a href="/knowledge/${e.id}"><strong>${e.title || clip(e.text, 60)}</strong></a>
+      ${statusPill(e.active ? 'active' : 'inactive')} <span class="muted">v${e.version} · ${platformName(e.platform)}${e.kind === 'example' ? ` · ${n(e.reach)} reach, ${n(e.shares)} shares, ${n(e.likes)} likes` : ''}</span></div>
+    <p class="pre">${clip(e.text, 300)}</p>
+  </div>`)}</div>`
+    : html`<p class="muted">None yet.</p>`;
+}
+
+export function trainingPage(user, { entries, usage, auditLog }) {
+  const of = (kind) => entries.filter((e) => e.kind === kind);
+  return layout('Agent training', user, html`
+<h1>Agent training</h1>
+<p class="muted">The writer and compliance agents read the current version of every active rule, and the best examples, on every run. Editing creates a new version; nothing is deleted. Each post records exactly which versions it used.</p>
+<h2>Brand rules</h2>${entryList(of('brand_rule'))}
+<h2>Compliance rules</h2>${entryList(of('compliance_rule'))}
+<h2>Example posts</h2>${entryList(of('example'))}
+<h2>Add a rule or example</h2>
+<form method="post" action="/knowledge" class="stack panel">
+  <label>Type <select name="kind">${Object.entries(KNOWLEDGE_KINDS).map(([kind, text]) => html`<option value="${kind}">${text}</option>`)}</select></label>
+  <label>Platform <select name="platform"><option value="all">All platforms (rules only)</option>${SOCIAL.map((p) => html`<option value="${p}">${CHANNELS[p].label}</option>`)}</select></label>
+  ${entryFields('example')}
+  <p class="muted">Likes, shares and reach are only used for examples. The brand voice guide can be one brand rule titled "Voice guide".</p>
+  <button>Add</button>
+</form>
+<h2>AI usage, last 7 days</h2>
+${usage.rows.length
+    ? html`<table>
+  <thead><tr><th>Agent</th><th>Calls</th><th>Input tokens</th><th>Cached reads</th><th>Output tokens</th><th>Web searches</th><th>Avg. seconds</th><th>Est. cost</th></tr></thead>
+  <tbody>${usage.rows.map((r) => html`<tr><td>${r.name}</td><td>${n(r.calls)}</td><td>${n(r.input + r.cache_write)}</td><td>${n(r.cache_read)}</td><td>${n(r.output)}</td><td>${n(r.searches)}</td><td>${(r.ms / 1000).toFixed(1)}</td><td>${money(r.cost)}</td></tr>`)}</tbody>
+</table>
+<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}Estimated at Claude Opus 5 list prices.</p>`
+    : html`<p class="muted">No AI calls in the last 7 days.</p>`}
+<h2>Audit log</h2>
+${auditLog.length
+    ? html`<ol class="timeline">${auditLog.map((a) => html`<li><time>${a.at} UTC</time> ${a.who ?? 'System'}: ${a.action.replaceAll('_', ' ')}${a.detail ? html`, ${a.detail}` : ''}</li>`)}</ol>`
+    : html`<p class="muted">Nothing yet.</p>`}`);
+}
+
+export function knowledgePage(user, entry, history) {
+  return layout(KNOWLEDGE_KINDS[entry.kind], user, html`
+<p><a href="/training">← Agent training</a></p>
+<h1>${KNOWLEDGE_KINDS[entry.kind]}${entry.title ? `: ${entry.title}` : ''}</h1>
+<p class="meta">${statusPill(entry.active ? 'active' : 'inactive')} ${platformName(entry.platform)} · current version v${entry.version}</p>
+<form method="post" action="/knowledge/${entry.id}" class="inline">
+  ${entry.active
+    ? html`<button name="action" value="deactivate" class="secondary">Deactivate (agents stop using it)</button>`
+    : html`<button name="action" value="activate" class="secondary">Reactivate</button>`}
+</form>
+<h2>Edit (creates v${entry.version + 1})</h2>
+<form method="post" action="/knowledge/${entry.id}" class="stack panel">
+  <input type="hidden" name="action" value="edit">
+  ${entryFields(entry.kind, entry)}
+  <label>What changed (optional) <input name="note" maxlength="200"></label>
+  <button>Save as v${entry.version + 1}</button>
+</form>
+<h2>History</h2>
+<div class="entries">${history.map((v) => html`
+  <div class="entry">
+    <div><strong>v${v.version}</strong>${v.id === entry.version_id ? html` ${statusPill('active')}` : ''}
+      <span class="muted">${v.created_at} UTC by ${v.author ?? 'System'}${v.note ? `, ${v.note}` : ''}${v.suggestion_id ? `, from suggestion #${v.suggestion_id}` : ''}</span></div>
+    <p class="pre">${v.title ? `${v.title}: ` : ''}${v.text}</p>
+    ${v.posts.length
+      ? html`<details><summary>Used by ${v.used_by} post${v.used_by === 1 ? '' : 's'}</summary><ul>${v.posts.map((p) => html`<li><a href="/articles/${p.article_id}">${p.title}</a> (${CHANNELS[p.channel].label})</li>`)}</ul></details>`
+      : html`<p class="muted">Not used by any post yet.</p>`}
+    ${v.id === entry.version_id
+      ? ''
+      : html`<form method="post" action="/knowledge/${entry.id}"><input type="hidden" name="version_id" value="${v.id}"><button name="action" value="rollback" class="secondary">Roll back to v${v.version}</button></form>`}
+  </div>`)}</div>`);
+}
+
+// ---------- admin: web sources ----------
+
+export function sourcesPage(user, { sources, pending }) {
+  return layout('Sources', user, html`
+<h1>Sources</h1>
+<p class="muted"><strong>Compliance</strong> pages (regulator guidance, platform health-content policies) are checked daily. A changed page waits here until you approve it; until then the compliance agent keeps using the last approved version. <strong>Trends</strong> links set the only domains the AI may search or open for trending keywords. Only https links; each domain you add becomes part of the allowlist.</p>
+<form method="post" action="/sources" class="stack panel narrow">
+  <label>Link <input type="url" name="url" required maxlength="500" placeholder="https://"></label>
+  <fieldset><legend>Type</legend>
+    <label class="check"><input type="radio" name="kind" value="compliance" checked> Compliance page</label>
+    <label class="check"><input type="radio" name="kind" value="trends"> Trends source</label>
+  </fieldset>
+  <button>Add source</button>
+</form>
+${pending.length
+    ? html`<h2>Waiting for approval (${pending.length})</h2>${pending.map((s) => html`
+<section class="panel">
+  <p><strong>${s.url}</strong> <span class="muted">fetched ${s.fetched_at} UTC</span></p>
+  ${s.approved_text == null
+      ? html`<p class="muted">First version of this page. Read it before approving:</p><details open><summary>Page text</summary><p class="pre snapshot">${clip(s.text, 5000)}</p></details>`
+      : html`<p class="muted">Changes since the approved version (green added, red removed):</p>${renderDiff(compactDiff(lineDiff(s.approved_text, s.text)))}`}
+  <form method="post" action="/snapshots/${s.id}" class="inline">
+    <button name="action" value="approve">Approve this version</button>
+    <button name="action" value="reject" class="secondary">Reject</button>
+  </form>
+</section>`)}`
+    : ''}
+<h2>All sources</h2>
+${sources.length
+    ? html`<table>
+  <thead><tr><th>Link</th><th>Type</th><th>Status</th><th>Approved version</th><th>Last check</th><th></th></tr></thead>
+  <tbody>${sources.map((s) => html`<tr>
+    <td><a href="${s.url}" target="_blank" rel="noopener noreferrer">${clip(s.url, 70)}</a>${s.last_error ? html`<p class="error">${s.last_error}</p>` : ''}</td>
+    <td>${s.kind === 'compliance' ? 'Compliance' : 'Trends'}</td>
+    <td>${statusPill(s.active ? 'active' : 'inactive')}${s.pending ? html` ${statusPill('pending')}` : ''}</td>
+    <td>${s.kind === 'compliance' ? (s.approved_at ? `${s.approved_at} UTC` : 'None yet') : '-'}</td>
+    <td>${s.last_checked_at ? `${s.last_checked_at} UTC` : '-'}</td>
+    <td><form method="post" action="/sources/${s.id}" class="inline">
+      ${s.kind === 'compliance' && s.active ? html`<button name="action" value="check" class="secondary">Check now</button>` : ''}
+      <button name="action" value="${s.active ? 'deactivate' : 'activate'}" class="secondary">${s.active ? 'Deactivate' : 'Activate'}</button>
+    </form></td>
+  </tr>`)}</tbody>
+</table>`
+    : html`<p class="muted">No sources yet.</p>`}`);
+}
+
+// ---------- admin: weekly suggestions ----------
+
+function suggestionCard(s, posts) {
+  const evidence = JSON.parse(s.evidence ?? '[]');
+  const linked = JSON.parse(s.item_ids ?? '[]').map((id) => posts.get(id)).filter(Boolean);
+  const kindText = s.kind === 'reminder' ? 'Reminder' : `New ${KNOWLEDGE_KINDS[s.kind].toLowerCase()}`;
+  return html`<section class="panel">
+  <p><strong>${kindText}</strong> <span class="muted">${s.kind === 'reminder' ? '' : platformName(s.platform)} · #${s.id}</span></p>
+  ${s.summary ? html`<p>${s.summary}</p>` : ''}
+  ${evidence.length ? html`${evidence.map((quote) => html`<blockquote>${quote}</blockquote>`)}` : ''}
+  ${linked.length ? html`<p class="muted">Based on: ${linked.map((p, i) => html`${i ? ', ' : ''}<a href="/articles/${p.article_id}">${CHANNELS[p.channel].label} post #${p.id}</a>`)}</p>` : ''}
+  <p class="post">${s.text}</p>
+  ${s.kind === 'reminder'
+    ? html`<form method="post" action="/suggestions/${s.id}" class="inline"><a href="/sources">Open Sources</a>
+      <button name="action" value="dismiss" class="secondary">Dismiss</button></form>`
+    : html`<form method="post" action="/suggestions/${s.id}" class="inline">
+      <button name="action" value="accept">Accept</button>
+      <button name="action" value="reject" class="secondary">Reject</button>
+    </form>
+    <details><summary>Edit before accepting</summary>
+      <form method="post" action="/suggestions/${s.id}" class="stack">
+        <textarea name="text" rows="4" required maxlength="5000" aria-label="Edited text">${s.text}</textarea>
+        <button name="action" value="edit">Accept with my edits</button>
+      </form>
+    </details>`}
+</section>`;
+}
+
+export function suggestionsPage(user, { pending, decided, posts, digests, running }) {
+  return layout('Suggestions', user, html`
+<h1>Suggestions</h1>
+<p class="muted">Once a week the coach reviews how reviewers changed the AI's drafts, which posts performed best and which ones struggled with compliance, then proposes rules and examples. It cannot change anything itself: only what you accept or edit becomes a new version, and rejected ideas are kept so they are not proposed again.</p>
+${running
+    ? html`<p class="note">The coach is working on a digest. This page refreshes by itself.</p>`
+    : html`<form method="post" action="/suggestions"><button class="secondary">Generate now</button></form>`}
+<h2>Waiting for a decision (${pending.length})</h2>
+${pending.length ? pending.map((s) => suggestionCard(s, posts)) : html`<p class="muted">Nothing to decide.</p>`}
+<h2>Weekly digests</h2>
+${digests.length
+    ? html`<ol class="timeline">${digests.map((d) => html`<li><time>${d.created_at} UTC</time> ${statusPill(d.status)} ${d.note ?? ''}</li>`)}</ol>`
+    : html`<p class="muted">No digest yet. The first one runs automatically within a day of starting the app.</p>`}
+<h2>Decided</h2>
+${decided.length
+    ? html`<table>
+  <thead><tr><th>Decided (UTC)</th><th>Type</th><th>Decision</th><th>Text</th><th>By</th></tr></thead>
+  <tbody>${decided.map((s) => html`<tr>
+    <td>${s.decided_at}</td>
+    <td>${s.kind === 'reminder' ? 'Reminder' : KNOWLEDGE_KINDS[s.kind]}</td>
+    <td>${statusPill(s.status)}</td>
+    <td>${clip(s.final_text ?? s.text, 160)}${s.knowledge_id ? html` <a href="/knowledge/${s.knowledge_id}">view</a>` : ''}</td>
+    <td>${s.decided_by_name ?? '-'}</td>
+  </tr>`)}</tbody>
+</table>`
+    : html`<p class="muted">Nothing decided yet.</p>`}`, { refresh: running ? 5 : null });
+}

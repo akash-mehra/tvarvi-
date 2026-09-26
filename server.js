@@ -2,20 +2,21 @@ import { createServer } from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import * as admin from './admin.js';
 import { generateItem } from './ai.js';
+import { runDigest } from './coach.js';
 import { all, logEvent, one, recoverInterrupted, run, tx, UPLOADS } from './db.js';
+import { BASE, backLink, count, fail, field, HttpError, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
+import { createEntry, latestMetrics } from './knowledge.js';
 import { publishItem } from './publish.js';
+import { checkAllSources } from './sources.js';
 import { CHANNELS, limitProblems, SOCIAL } from './text.js';
 import * as view from './views.js';
 
-const BASE = new URL(process.env.PUBLIC_BASE_URL || 'http://localhost:3000');
-const SECURE = BASE.protocol === 'https:';
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const LOCK_MS = 15 * 60 * 1000;
-const FORM_LIMIT = 1024 * 1024;
 const IMAGE_LIMIT = 8 * 1024 * 1024;
 const FLAGS = ['is_admin', 'can_write', 'can_review', 'can_publish'];
 const EDITABLE = ['draft', 'failed', 'ready', 'publish_failed'];
@@ -23,16 +24,6 @@ const PUBLISHABLE = ['ready', 'publishing', 'published', 'publish_failed'];
 const CHANNEL_ORDER = ['website', ...SOCIAL];
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CSS = await readFile(new URL('./public/style.css', import.meta.url));
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-const fail = (status, message) => {
-  throw new HttpError(status, message);
-};
 
 // ---------- passwords & sessions ----------
 
@@ -92,55 +83,6 @@ function currentUser(req) {
      WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`,
     sha256(token), Date.now(),
   ) ?? null;
-}
-
-// ---------- request helpers ----------
-
-// Browsers always send Origin (or at least Sec-Fetch-Site) on form posts; anything else is cross-site.
-const sameOrigin = (req) =>
-  req.headers.origin ? req.headers.origin === BASE.origin : req.headers['sec-fetch-site'] === 'same-origin';
-
-async function readForm(req, limit = FORM_LIMIT) {
-  const length = Number(req.headers['content-length']);
-  if (!req.headers['content-length'] || !Number.isSafeInteger(length)) fail(411, 'The request had no length.');
-  if (length > limit) fail(413, 'That is too large to upload.');
-  try {
-    return await new Request(BASE, {
-      method: 'POST',
-      headers: { 'content-type': req.headers['content-type'] ?? '' },
-      body: Readable.toWeb(req),
-      duplex: 'half',
-    }).formData();
-  } catch {
-    fail(400, 'The form could not be read.');
-  }
-}
-
-function field(form, name, label, max, required = true) {
-  const value = String(form.get(name) ?? '').replace(/\r\n?/g, '\n').trim();
-  if (required && !value) fail(400, `${label} is required.`);
-  if (value.length > max) fail(400, `${label} is too long (at most ${max} characters).`);
-  return value;
-}
-
-const toId = (value) => (/^\d{1,12}$/.test(String(value)) ? Number(value) : fail(400, 'Invalid selection.'));
-
-function send(res, body, status = 200) {
-  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(body);
-}
-
-function redirect(res, location) {
-  res.writeHead(303, { location });
-  res.end();
-}
-
-function backLink(req) {
-  try {
-    const url = new URL(req.headers.referer);
-    if (url.origin === BASE.origin) return url.pathname + url.search;
-  } catch {}
-  return '/';
 }
 
 // ---------- workflow rules ----------
@@ -205,6 +147,28 @@ function dashboard({ res, user }) {
       ? all(`${LIST_SQL} WHERE a.reviewer_id = ? AND a.status IN ('in_review', 'approved') ORDER BY a.updated_at`, user.id)
       : [],
     publishing: user.can_publish ? all(`${LIST_SQL} WHERE a.status = 'awaiting_publisher' ORDER BY a.updated_at`) : [],
+    attention: user.is_admin
+      ? {
+          suggestions: one(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`).n,
+          snapshots: one(`SELECT COUNT(*) AS n FROM snapshots WHERE status = 'pending'`).n,
+        }
+      : null,
+  }));
+}
+
+// For each post: what it used (with links to rule/example history), latest engagement, and whether it is an example.
+function describeItems(items) {
+  return items.map((item) => ({
+    ...item,
+    inputs: all(
+      `SELECT ii.kind, ii.ref_id, ii.label, kv.knowledge_id FROM item_inputs ii
+       LEFT JOIN knowledge_versions kv ON ii.kind IN ('rule', 'example') AND kv.id = ii.ref_id
+       WHERE ii.item_id = ? ORDER BY CASE ii.kind WHEN 'rule' THEN 1 WHEN 'example' THEN 2 WHEN 'post' THEN 3
+         WHEN 'snapshot' THEN 4 WHEN 'web' THEN 5 ELSE 6 END, ii.rowid`,
+      item.id,
+    ),
+    metrics: latestMetrics(item.id),
+    promoted: one('SELECT id FROM knowledge WHERE source_item_id = ?', item.id)?.id ?? null,
   }));
 }
 
@@ -234,10 +198,12 @@ function articlePage({ res, user, params: [id] }) {
     publish: canPublish(user, a, items),
     sendToPublisher: isReviewer(user, a) && !!user.can_publish && a.status === 'approved' && allReady(items),
     sendBack: !!user.can_publish && a.status === 'awaiting_publisher',
+    promote: !!user.is_admin,
+    metrics: !!(user.is_admin || user.can_publish),
   };
   send(res, view.articlePage(user, {
     article: a,
-    items,
+    items: describeItems(items),
     perm,
     generating,
     events: all(
@@ -321,6 +287,8 @@ async function itemAction({ req, res, user, params: [id] }) {
   const form = await readForm(req);
   const action = form.get('action');
   if (action === 'publish') return publish(res, user, a, item);
+  if (action === 'promote') return promote(res, user, a, item);
+  if (action === 'metrics') return recordMetrics(res, user, a, item, form);
 
   if (!isReviewer(user, a)) fail(403, 'Only the assigned reviewer can change posts.');
   expectStatus(a, 'approved');
@@ -336,7 +304,8 @@ async function itemAction({ req, res, user, params: [id] }) {
       if (problems.length) fail(400, problems.join(' '));
     }
     tx(() => {
-      updateItem(item, 'UPDATE items SET body = ?, error = NULL, status = ?', body, action === 'ready' ? 'ready' : 'draft');
+      updateItem(item, `UPDATE items SET body = ?, error = NULL, status = ?, reviewed_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE reviewed_at END`,
+        body, action === 'ready' ? 'ready' : 'draft', action === 'ready' ? 1 : 0);
       logEvent(a.id, user.id, action === 'ready' ? 'ready' : 'edited', label);
       if (action === 'ready') handOffIfDone(a, user);
     });
@@ -349,6 +318,38 @@ async function itemAction({ req, res, user, params: [id] }) {
   } else {
     fail(400, 'Unknown action.');
   }
+  redirect(res, `/articles/${a.id}`);
+}
+
+// Admin turns a reviewer-approved post into a versioned example the writer agent learns from.
+function promote(res, user, a, item) {
+  if (!user.is_admin) fail(403, 'Only admins can add examples.');
+  if (!SOCIAL.includes(item.channel) || !['ready', 'published'].includes(item.status)) {
+    fail(400, 'Only social posts that a reviewer marked ready (or that are published) can become examples.');
+  }
+  if (one('SELECT 1 FROM knowledge WHERE source_item_id = ?', item.id)) fail(409, 'This post is already an example.');
+  const metrics = latestMetrics(item.id);
+  tx(() => {
+    createEntry({
+      kind: 'example', platform: item.channel, text: item.body, likes: metrics?.likes, shares: metrics?.shares,
+      reach: metrics?.reach, sourceItemId: item.id, note: `Promoted from "${a.title}"`,
+    }, user.id);
+    logEvent(a.id, user.id, 'promoted', CHANNELS[item.channel].label);
+  });
+  redirect(res, `/articles/${a.id}`);
+}
+
+// Engagement typed in from the platform. Later the Instagram Insights API adds rows with source 'instagram_insights'.
+function recordMetrics(res, user, a, item, form) {
+  if (!user.is_admin && !user.can_publish) fail(403, 'Only admins and publishers can record engagement.');
+  if (!SOCIAL.includes(item.channel) || item.status !== 'published') fail(400, 'Engagement can only be recorded for published social posts.');
+  const [likes, shares, reach, saves] = [['likes', 'Likes'], ['shares', 'Shares'], ['reach', 'Reach'], ['saves', 'Saves']]
+    .map(([name, label]) => count(form, name, label) ?? 0);
+  tx(() => {
+    run(`INSERT INTO post_metrics (item_id, likes, shares, reach, saves, source, recorded_by) VALUES (?, ?, ?, ?, ?, 'manual', ?)`,
+      item.id, likes, shares, reach, saves, user.id);
+    logEvent(a.id, user.id, 'metrics', `${CHANNELS[item.channel].label}: ${reach} reach, ${shares} shares, ${likes} likes, ${saves} saves`);
+  });
   redirect(res, `/articles/${a.id}`);
 }
 
@@ -535,7 +536,46 @@ const routes = [
   ['POST', /^\/users\/(\d{1,12})$/, updateUser],
   ['GET', /^\/account$/, accountPage],
   ['POST', /^\/account$/, changePassword],
+  ['GET', /^\/training$/, admin.trainingPage],
+  ['POST', /^\/knowledge$/, admin.createKnowledge],
+  ['GET', /^\/knowledge\/(\d{1,12})$/, admin.knowledgePage],
+  ['POST', /^\/knowledge\/(\d{1,12})$/, admin.knowledgeAction],
+  ['GET', /^\/sources$/, admin.sourcesPage],
+  ['POST', /^\/sources$/, admin.createSource],
+  ['POST', /^\/sources\/(\d{1,12})$/, admin.sourceAction],
+  ['POST', /^\/snapshots\/(\d{1,12})$/, admin.snapshotAction],
+  ['GET', /^\/suggestions$/, admin.suggestionsPage],
+  ['POST', /^\/suggestions$/, admin.generateDigest],
+  ['POST', /^\/suggestions\/(\d{1,12})$/, admin.suggestionAction],
 ];
+
+// ---------- background jobs (single instance) ----------
+
+const DAY = 24 * 60 * 60 * 1000;
+const JOBS = [
+  ['compliance_snapshots', DAY, checkAllSources],
+  ['weekly_digest', 7 * DAY, () => runDigest(null)],
+];
+
+export async function runDueJobs(now = Date.now()) {
+  for (const [name, every, job] of JOBS) {
+    const last = one('SELECT last_run_at FROM jobs WHERE name = ?', name)?.last_run_at ?? 0;
+    if (now - last < every) continue;
+    // Recorded first, so a crashing job waits for its next slot instead of retrying every hour.
+    run('INSERT INTO jobs (name, last_run_at) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET last_run_at = excluded.last_run_at', name, now);
+    try {
+      await job();
+    } catch (err) {
+      console.error(`Background job ${name} failed:`, err);
+    }
+  }
+}
+
+function startJobs() {
+  const tick = () => runDueJobs().catch((err) => console.error('Background jobs failed:', err));
+  setTimeout(tick, 60_000).unref();
+  setInterval(tick, 60 * 60 * 1000).unref();
+}
 
 export async function handler(req, res) {
   res.setHeader('content-security-policy',
@@ -583,6 +623,7 @@ async function main() {
   }
   if (!process.env.ANTHROPIC_API_KEY) console.warn('ANTHROPIC_API_KEY is not set: AI post writing will fail until it is.');
   recoverInterrupted();
+  if (process.env.BACKGROUND_JOBS !== 'off') startJobs();
   const server = createServer(handler);
   server.listen(Number(process.env.PORT) || 3000, () => console.log(`Tvarvi is running at ${BASE.origin}`));
   process.on('SIGTERM', () => server.close(() => process.exit(0)));

@@ -11,7 +11,8 @@ process.env.DRY_RUN_CHANNELS = 'website,instagram,linkedin,x';
 
 const { handler, addUser } = await import('../server.js');
 const { ai } = await import('../ai.js');
-const { all, one } = await import('../db.js');
+const { all, one, run } = await import('../db.js');
+const { createEntry } = await import('../knowledge.js');
 
 const ORIGIN = 'http://app.test';
 const PASSWORD = 'correct horse battery staple';
@@ -19,14 +20,28 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 
 let base;
 let server;
 
-// Stand-in for Claude: the compliance agent rejects drafts without a disclaimer, the writer adds it on rewrite.
-ai.ask = async (system, prompt, schema) => {
-  if (schema.properties.approved) {
-    return prompt.includes('not medical advice')
-      ? { approved: true, issues: [] }
-      : { approved: false, issues: ['Add a "not medical advice" line.'] };
+// Stand-in for Claude, scripted per turn:
+// writer turn 1 looks up top posts; turn 2 submits a draft without a disclaimer (compliance rejects it);
+// turn 3 resubmits with the disclaimer (compliance approves it).
+let nextId = 0;
+const complianceSystems = [];
+const reply = (content, stopReason) => ({ content, stop_reason: stopReason, usage: { input_tokens: 1000, output_tokens: 200 } });
+const toolUse = (name, input) => ({ type: 'tool_use', id: `toolu_${++nextId}`, name, input });
+ai.ask = async (params) => {
+  if (params.output_config) {
+    complianceSystems.push(params.system.map((block) => block.text).join('\n'));
+    const approved = params.messages[0].content.includes('not medical advice');
+    return reply([{ type: 'text', text: JSON.stringify(approved ? { approved, issues: [] } : { approved, issues: ['Add a "not medical advice" line.'] }) }], 'end_turn');
   }
-  return { text: prompt.includes('Rewrite') ? 'Fibre helps. General information, not medical advice. #WomensHealth' : 'Fibre helps! #WomensHealth' };
+  const last = params.messages.at(-1);
+  if (typeof last.content === 'string') {
+    const platform = params.system.includes('LinkedIn post') ? 'linkedin' : params.system.includes('X (Twitter) post') ? 'x' : 'instagram';
+    return reply([toolUse('get_top_posts', { platform, topic: 'iron' })], 'tool_use');
+  }
+  const rejected = last.content.some((block) => /rejected this draft/.test(block.content));
+  return reply([toolUse('submit_post', {
+    text: rejected ? 'Fibre helps. General information, not medical advice. #WomensHealth' : 'Fibre helps! #WomensHealth',
+  })], 'tool_use');
 };
 
 before(async () => {
@@ -105,14 +120,34 @@ test('article goes from writer to published, following the diagram', async (t) =
     assert.equal(res.status, 400);
   });
 
-  await t.test('approval starts the three AI agent complexes', async () => {
+  // Approved knowledge and web sources the agents must use: one brand rule, one Instagram example,
+  // and a compliance page whose newer version is still pending (so it must not be used yet).
+  const adminId = one(`SELECT id FROM users WHERE email = 'admin@example.com'`).id;
+  const rule = createEntry({ kind: 'brand_rule', title: 'Voice guide', text: 'Warm, plain words.' }, adminId);
+  const example = createEntry({ kind: 'example', platform: 'instagram', text: 'Iron fuels your day. #Iron', reach: 900 }, adminId);
+  run(`INSERT INTO sources (id, url, host, kind) VALUES (1, 'https://regulator.example/health-claims', 'regulator.example', 'compliance')`);
+  run(`INSERT INTO snapshots (id, source_id, text, hash, status) VALUES (1, 1, 'APPROVED GUIDANCE TEXT', 'a', 'approved'), (2, 1, 'PENDING GUIDANCE TEXT', 'b', 'pending')`);
+
+  await t.test('approval starts the three tool-using AI agent complexes', async () => {
     const res = await post(reviewer, '/articles/1', { action: 'approve', title: article.title, body: 'Iron matters.\n\nEat leafy greens daily.' });
     assert.equal(res.status, 303);
     assert.equal(status(), 'approved');
     await waitFor(() => !one(`SELECT 1 FROM items WHERE status = 'generating'`));
-    const posts = all(`SELECT channel, status, ai_ok, body FROM items WHERE channel != 'website' ORDER BY channel`);
-    assert.deepEqual(posts.map((p) => [p.channel, p.status, p.ai_ok]), [['instagram', 'draft', 1], ['linkedin', 'draft', 1], ['x', 'draft', 1]]);
+    const posts = all(`SELECT id, channel, status, ai_ok, rounds, ai_draft, body FROM items WHERE channel != 'website' ORDER BY channel`);
+    assert.deepEqual(posts.map((p) => [p.channel, p.status, p.ai_ok, p.rounds]),
+      [['instagram', 'draft', 1, 2], ['linkedin', 'draft', 1, 2], ['x', 'draft', 1, 2]]);
     assert.match(posts[0].body, /not medical advice/);
+    assert.equal(posts[0].ai_draft, posts[0].body);
+
+    // Every tool call is in the article's history.
+    const toolCalls = all(`SELECT detail FROM events WHERE action = 'tool_call'`).map((e) => e.detail);
+    assert.equal(toolCalls.length, 3);
+    assert.match(toolCalls.find((d) => d.startsWith('Instagram writer')), /get_top_posts\(platform="instagram", topic="iron"\) → 1 row/);
+
+    // The post records exactly which rule/example versions and which approved snapshot it used.
+    const inputs = all('SELECT kind, ref_id FROM item_inputs WHERE item_id = ? ORDER BY kind', posts[0].id).map((i) => `${i.kind}:${i.ref_id}`);
+    assert.deepEqual(inputs.sort(), [`example:${example.versionId}`, `rule:${rule.versionId}`, 'snapshot:1'].sort());
+    assert.ok(complianceSystems.every((s) => s.includes('APPROVED GUIDANCE TEXT') && !s.includes('PENDING GUIDANCE TEXT')));
   });
 
   const item = (channel) => one('SELECT * FROM items WHERE channel = ?', channel);
@@ -144,5 +179,24 @@ test('article goes from writer to published, following the diagram', async (t) =
     assert.deepEqual(all('SELECT DISTINCT status, simulated FROM items').map((row) => ({ ...row })), [{ status: 'published', simulated: 1 }]);
     assert.equal(one(`SELECT COUNT(*) AS n FROM events WHERE action = 'published'`).n, 4);
     assert.equal(one(`SELECT COUNT(*) AS n FROM events WHERE action = 'completed'`).n, 1);
+  });
+
+  await t.test('engagement is recorded and a post can be promoted to a versioned example', async () => {
+    const x = item('x');
+    assert.equal((await post(writer, `/items/${x.id}`, { action: 'metrics', likes: '5' })).status, 403);
+    assert.equal((await post(publisher, `/items/${x.id}`, { action: 'metrics', likes: '-1' })).status, 400);
+    assert.equal((await post(publisher, `/items/${x.id}`, { action: 'metrics', likes: '12', shares: '3', reach: '800', saves: '' })).status, 303);
+    assert.deepEqual({ ...one('SELECT likes, shares, reach, saves, source FROM post_metrics WHERE item_id = ?', x.id) },
+      { likes: 12, shares: 3, reach: 800, saves: 0, source: 'manual' });
+
+    assert.equal((await post(publisher, `/items/${x.id}`, { action: 'promote' })).status, 403);
+    assert.equal((await post(admin, `/items/${x.id}`, { action: 'promote' })).status, 303);
+    assert.equal((await post(admin, `/items/${x.id}`, { action: 'promote' })).status, 409);
+    const promoted = one(`SELECT k.platform, v.text, v.likes, v.reach, v.version FROM knowledge k
+      JOIN knowledge_versions v ON v.id = k.current_version_id WHERE k.source_item_id = ?`, x.id);
+    assert.deepEqual({ ...promoted }, { platform: 'x', text: x.body, likes: 12, reach: 800, version: 1 });
+    const page = await (await request(admin, '/articles/1')).text();
+    assert.match(page, /Sources used/);
+    assert.match(page, /Brand rule &quot;Voice guide&quot; v1/);
   });
 });
