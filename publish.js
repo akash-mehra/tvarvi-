@@ -72,17 +72,24 @@ async function publishWebsite(_item, article) {
   return data.url;
 }
 
-// Instagram Graph API: create a media container from a public image URL, wait until processed, publish it.
+// Instagram Graph API: create a media container from public image URLs (for a carousel, one container per slide, then
+// a CAROUSEL container with them as children), wait until processed, publish it. `item.slides`: carousel JPEGs, in order.
 async function publishInstagram(item, _article, baseUrl) {
   const [api, igUser, token] = env('IG_API_BASE', 'IG_USER_ID', 'IG_ACCESS_TOKEN');
-  if (!item.image) throw new Error('Instagram needs an image. Upload a JPEG first.');
+  const slides = item.slides ?? [];
+  if (!slides.length && !item.image) throw new Error('Instagram needs an image. Upload a JPEG first.');
   const auth = { authorization: `Bearer ${token}` };
   const json = { ...auth, 'content-type': 'application/json' };
-  const { data: container } = await call('Instagram', `${api}/${igUser}/media`, {
-    method: 'POST',
-    headers: json,
-    body: JSON.stringify({ image_url: new URL(`/media/${item.image}`, baseUrl).href, caption: item.body }),
-  });
+  const create = async (fields) => (await call('Instagram', `${api}/${igUser}/media`, { method: 'POST', headers: json, body: JSON.stringify(fields) })).data;
+  const imageUrl = (name) => new URL(`/media/${name}`, baseUrl).href;
+  let container;
+  if (slides.length) {
+    const children = [];
+    for (const name of slides) children.push((await create({ image_url: imageUrl(name), is_carousel_item: true })).id);
+    container = await create({ media_type: 'CAROUSEL', children: children.join(','), caption: item.body });
+  } else {
+    container = await create({ image_url: imageUrl(item.image), caption: item.body });
+  }
   for (let attempt = 0; ; attempt++) {
     const { data } = await call('Instagram', `${api}/${container.id}?fields=status_code`, { headers: auth });
     if (data.status_code === 'FINISHED') break;

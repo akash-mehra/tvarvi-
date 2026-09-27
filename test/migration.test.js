@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tvarvi-migration-'));
 
-test('migration 3 rebuilds sources for research sites, keeping every row, id and snapshot link', async () => {
+test('migrations 3 and 4 rebuild sources for research sites, keeping every row, id and snapshot link, and add carousels', async () => {
   // The tables migration 3 changes, as v2 left them.
   const old = new DatabaseSync(join(process.env.DATA_DIR, 'app.db'));
   old.exec(`
@@ -30,7 +30,7 @@ test('migration 3 rebuilds sources for research sites, keeping every row, id and
   old.close();
 
   const { db, all, one, run } = await import('../db.js');
-  assert.equal(one('PRAGMA user_version').user_version, 3);
+  assert.equal(one('PRAGMA user_version').user_version, 4);
   assert.equal(one('PRAGMA foreign_keys').foreign_keys, 1, 'foreign keys are back on');
   assert.deepEqual(all('SELECT id, kind, host, last_error FROM sources ORDER BY id').map((r) => ({ ...r })), [
     { id: 3, kind: 'compliance', host: 'reg.example', last_error: 'timeout' },
@@ -40,6 +40,7 @@ test('migration 3 rebuilds sources for research sites, keeping every row, id and
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
   run(`INSERT INTO sources (url, host, kind) VALUES ('https://nih.gov/', 'nih.gov', 'research')`);
   assert.throws(() => run(`INSERT INTO snapshots (source_id, text, hash) VALUES (999, 'x', 'y')`), /FOREIGN KEY/);
-  assert.deepEqual({ ...one('SELECT agent, model, draft_id FROM ai_calls') }, { agent: 'coach', model: 'claude-opus-5', draft_id: null });
+  assert.deepEqual({ ...one('SELECT agent, model, draft_id, carousel_id FROM ai_calls') }, { agent: 'coach', model: 'claude-opus-5', draft_id: null, carousel_id: null });
   assert.equal(one(`SELECT COUNT(*) AS n FROM drafts`).n, 0);
+  assert.equal(one(`SELECT COUNT(*) AS n FROM carousels`).n, 0);
 });

@@ -16,29 +16,39 @@ export const MODELS = {
   'claude-sonnet-4-6': { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
 };
 export const SEARCH_PRICE = 0.01; // per web search; web fetch costs tokens only
+// Gemini picture models for carousels, USD per million tokens, checked September 2026. A 1K picture is 1,120 output
+// tokens ($0.067 on Flash Image); the input is a short text prompt.
+export const IMAGE_MODELS = {
+  'gemini-3.1-flash-image': { input: 0.5, output: 60, cacheWrite: 0, cacheRead: 0 },
+  'gemini-3.1-flash-lite-image': { input: 0.25, output: 30, cacheWrite: 0, cacheRead: 0 },
+  'gemini-3-pro-image': { input: 2, output: 120, cacheWrite: 0, cacheRead: 0 },
+};
 
 // One model per agent, set with environment variables. An unknown model stops the app at startup.
 export function agentModels(env = process.env) {
-  const pick = (name, fallback) => {
+  const pick = (name, fallback, table = MODELS) => {
     const model = String(env[name] ?? '').trim() || fallback;
-    if (!Object.hasOwn(MODELS, model)) {
-      throw new Error(`${name}="${model}" is not a supported model. Use one of: ${Object.keys(MODELS).join(', ')}.`);
+    if (!Object.hasOwn(table, model)) {
+      throw new Error(`${name}="${model}" is not a supported model. Use one of: ${Object.keys(table).join(', ')}.`);
     }
     return model;
   };
   return {
     writer: pick('MODEL_WRITER', 'claude-sonnet-5'),
     article: pick('MODEL_ARTICLE_WRITER', 'claude-sonnet-5'),
+    carousel: pick('MODEL_CAROUSEL_WRITER', 'claude-sonnet-5'),
     scout: pick('MODEL_TREND_SCOUT', 'claude-sonnet-5'),
     compliance: pick('MODEL_COMPLIANCE', 'claude-opus-5'),
+    imageCheck: pick('MODEL_IMAGE_CHECK', 'claude-sonnet-5'),
     coach: pick('MODEL_COACH', 'claude-opus-5'),
+    picture: pick('GEMINI_IMAGE_MODEL', 'gemini-3.1-flash-image', IMAGE_MODELS),
   };
 }
 export const MODEL = agentModels();
 
 // Cost of ai_calls rows in USD, at the price of the model that served them; null if that model's price is unknown.
 export function callCost({ model, input, output, cache_read, cache_write, searches }) {
-  const price = MODELS[model];
+  const price = MODELS[model] ?? IMAGE_MODELS[model];
   if (!price) return null;
   return (input * price.input + output * price.output + cache_read * price.cacheRead + cache_write * price.cacheWrite) / 1e6 +
     searches * SEARCH_PRICE;
@@ -134,21 +144,23 @@ export const ai = {
   },
 };
 
+export class RefusalError extends Error {}
+
 // Every Claude call goes through here, so cost and latency are measured in ai_calls.
 // The response's `model` is the model that served the call (a fallback may differ from the one requested).
-export async function callClaude(agent, articleId, params, { draftId = null, stream = false, onBlock } = {}) {
+export async function callClaude(agent, articleId, params, { draftId = null, carouselId = null, stream = false, onBlock } = {}) {
   const started = Date.now();
   const res = stream ? await ai.stream(params, onBlock) : await ai.ask(params);
   const usage = res.usage ?? {};
   run(
-    `INSERT INTO ai_calls (article_id, draft_id, agent, model, input_tokens, output_tokens, cache_read, cache_write, web_searches, web_fetches, ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    articleId ?? null, draftId, agent, res.model ?? params.model, usage.input_tokens ?? 0, usage.output_tokens ?? 0,
+    `INSERT INTO ai_calls (article_id, draft_id, carousel_id, agent, model, input_tokens, output_tokens, cache_read, cache_write, web_searches, web_fetches, ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    articleId ?? null, draftId, carouselId, agent, res.model ?? params.model, usage.input_tokens ?? 0, usage.output_tokens ?? 0,
     usage.cache_read_input_tokens ?? 0, usage.cache_creation_input_tokens ?? 0, usage.server_tool_use?.web_search_requests ?? 0,
     usage.server_tool_use?.web_fetch_requests ?? 0, Date.now() - started,
   );
   if (res.stop_reason === 'refusal') {
-    throw new Error(`The AI declined this request${res.stop_details?.category ? ` (${res.stop_details.category})` : ''}.`);
+    throw new RefusalError(`The AI declined this request${res.stop_details?.category ? ` (${res.stop_details.category})` : ''}.`);
   }
   if (res.stop_reason === 'max_tokens') throw new Error('The AI response was cut off.');
   return res;

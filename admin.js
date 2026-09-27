@@ -17,14 +17,21 @@ const requireAdmin = (user) => user.is_admin || fail(403, 'Only admins can do th
 // One row per agent type and model, each priced at that model's list price.
 function usageSummary() {
   const rows = all(
-    `SELECT CASE WHEN agent LIKE 'Article %' THEN 'Article agent' WHEN agent LIKE '% writer' THEN 'Writer' WHEN agent LIKE '% compliance' THEN 'Compliance'
+    `SELECT CASE WHEN agent LIKE 'Carousel %' THEN 'Carousel agent' WHEN agent LIKE 'Article %' THEN 'Article agent'
+                 WHEN agent LIKE '% writer' THEN 'Writer' WHEN agent LIKE '% compliance' THEN 'Compliance'
                  WHEN agent LIKE '% trend scout' THEN 'Trend scout' ELSE 'Coach' END AS name, model,
        COUNT(*) AS calls, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cache_read,
        SUM(cache_write) AS cache_write, SUM(web_searches) AS searches, SUM(web_fetches) AS fetches, ROUND(AVG(ms)) AS ms
      FROM ai_calls WHERE at >= datetime('now', '-7 days') GROUP BY name, model ORDER BY name, model`,
   ).map((row) => ({ ...row, cost: callCost(row) }));
-  const articles = one(`SELECT COUNT(DISTINCT article_id) AS n FROM ai_calls WHERE article_id IS NOT NULL AND at >= datetime('now', '-7 days')`).n;
-  const articleCost = rows.filter((r) => !['Coach', 'Article agent'].includes(r.name)).reduce((sum, r) => sum + (r.cost ?? 0), 0);
+  const articles = one(`SELECT COUNT(DISTINCT article_id) AS n FROM ai_calls WHERE article_id IS NOT NULL AND carousel_id IS NULL AND at >= datetime('now', '-7 days')`).n;
+  const articleCost = rows.filter((r) => !['Coach', 'Article agent', 'Carousel agent'].includes(r.name)).reduce((sum, r) => sum + (r.cost ?? 0), 0);
+  // Carousels: all their calls (edits and new pictures included), and minutes until each was first ready.
+  const carouselCost = rows.filter((r) => r.name === 'Carousel agent').reduce((sum, r) => sum + (r.cost ?? 0), 0);
+  const carouselsDone = one(
+    `SELECT COUNT(*) AS n, AVG((julianday(finished_at) - julianday(started_at)) * 1440) AS minutes FROM carousels
+     WHERE finished_at >= datetime('now', '-7 days') AND id IN (SELECT carousel_id FROM ai_calls WHERE carousel_id IS NOT NULL)`,
+  );
   // Article agent: cost and minutes per finished draft.
   const draftCost = rows.filter((r) => r.name === 'Article agent').reduce((sum, r) => sum + (r.cost ?? 0), 0);
   const draftsDone = one(
@@ -44,6 +51,7 @@ function usageSummary() {
   return {
     rows, articles, perArticle: articles ? articleCost / articles : null, seconds,
     drafts: draftsDone.n, perDraft: draftsDone.n ? draftCost / draftsDone.n : null, draftMinutes: draftsDone.minutes,
+    carousels: carouselsDone.n, perCarousel: carouselsDone.n ? carouselCost / carouselsDone.n : null, carouselMinutes: carouselsDone.minutes,
     unpriced: rows.some((r) => r.cost == null), models: MODEL,
   };
 }

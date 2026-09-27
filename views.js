@@ -1,5 +1,5 @@
 import { isDryRun } from './publish.js';
-import { CHANNELS, clip, compactDiff, esc, KNOWLEDGE_KINDS, lineDiff, postLength, SOCIAL, textToHtml } from './text.js';
+import { CAROUSEL_CHECKLIST, CHANNELS, clip, compactDiff, esc, KNOWLEDGE_KINDS, lineDiff, postLength, SOCIAL, textToHtml } from './text.js';
 
 // Every interpolated value is escaped unless it is itself html`` output or wrapped in raw().
 class Safe {
@@ -48,6 +48,23 @@ const EVENT = {
   promoted: 'promoted a post to an example',
   metrics: 'recorded engagement',
   ai_drafted: 'drafted it with the article agent',
+  carousel: 'asked the AI for an Instagram carousel',
+  carousel_slides: 'uploaded the finished carousel slides',
+  carousel_checked: 'ticked the carousel image checklist',
+  carousel_removed: 'removed the carousel',
+};
+const CAROUSEL_STATUS = {
+  working: ['Working…', 'generating'],
+  ready: ['Ready', 'ready'],
+  needs_attention: ['Needs attention', 'simulated'],
+  failed: ['Failed', 'failed'],
+  discarded: ['Removed', ''],
+};
+const CAROUSEL_JOB = {
+  write: 'The AI is writing the slides, then Gemini makes the pictures and the AI checks each one. This takes a few minutes',
+  check: 'The compliance agent is checking the edited text',
+  picture: 'Gemini is making a new picture and the AI is checking it',
+  final: 'The final text check is reading the finished slides',
 };
 const DRAFT_STATUS = {
   running: ['Researching and writing…', 'generating'],
@@ -241,31 +258,63 @@ function metricsForm(item) {
   </form>`;
 }
 
+const carouselPill = (status) => pill(...(CAROUSEL_STATUS[status] ?? [status, '']));
+
+function singleImage(item, editable) {
+  return html`${item.image
+    ? html`<img class="preview" src="/media/${item.image}" alt="Image for the Instagram post">`
+    : html`<p class="warn">Instagram posts need an image, or a carousel, before they can be marked ready.</p>`}
+  ${editable
+    ? html`<form method="post" action="/items/${item.id}/image" enctype="multipart/form-data" class="inline">
+    <input type="file" name="image" accept="image/jpeg" required>
+    <button class="secondary">Upload JPEG</button>
+    <span class="muted">Up to 8 MB. Aspect ratio between 4:5 and 1.91:1.</span>
+  </form>
+  <form method="post" action="/items/${item.id}/carousel" class="inline">
+    <button class="secondary">Make a carousel instead</button>
+    <span class="muted">The AI writes 5–10 slides from the article, Gemini makes the pictures, and you design them in Glass Slides.</span>
+  </form>`
+    : ''}`;
+}
+
+// The Instagram post as a carousel: its status, the finished slides and what the final text check found.
+function carouselSummary(c) {
+  const flagged = c.slides.filter((s) => s.check && !s.check.ok).length;
+  const finalFlagged = c.final_check.filter((r) => !r.ok).length;
+  return html`<p>${c.status === 'ready' ? '' : carouselPill(c.status)} <a href="/carousels/${c.id}">Carousel${c.slides.length ? ` of ${c.slides.length} slides` : ''}</a>${flagged
+    ? html` <span class="muted">· ${flagged} picture${flagged === 1 ? '' : 's'} flagged by the picture check</span>`
+    : ''}</p>
+  ${c.finals.length
+    ? html`<div class="strip">${c.finals.map((name, i) => html`<img src="/media/${name}" alt="Finished slide ${i + 1}">`)}</div>
+  ${c.status === 'ready' && c.final_check.length
+      ? html`<p class="${finalFlagged ? 'warn' : 'ok'}">${finalFlagged
+        ? `The final text check flagged ${finalFlagged} slide${finalFlagged === 1 ? '' : 's'}. See the carousel page.`
+        : 'The final text check found that every slide matches the approved text.'}</p>`
+      : ''}`
+    : html`<p class="muted">No finished slides yet: design them in Glass Slides and upload them on the carousel page.</p>`}`;
+}
+
+const checklistFields = () => html`<fieldset class="checklist">
+  <legend>Image checklist: tick every box before Mark ready</legend>
+  ${CAROUSEL_CHECKLIST.map(([key, text]) => html`<label class="check"><input type="checkbox" name="check_${key}" value="1"> ${text}</label>`)}
+</fieldset>`;
+
 function itemCard(item, perm, user) {
   const { label, max } = CHANNELS[item.channel];
   const editable = perm.editItems && item.channel !== 'website' && EDITABLE.includes(item.status);
   const social = SOCIAL.includes(item.channel);
+  const carousel = item.carousel;
   return html`<section class="card">
   <header><h3>${label}</h3> ${badge(item.status)}${item.simulated ? html` <span class="badge simulated">Simulated</span>` : ''}</header>
   ${item.error ? html`<p class="error">${item.error}</p>` : ''}
   ${item.ai_notes ? html`<p class="${item.ai_ok ? 'ok' : 'warn'} pre">${item.ai_notes}</p>` : ''}
   ${item.channel === 'website' ? html`<p class="muted">The approved article shown above.</p>` : ''}
-  ${item.channel === 'instagram'
-    ? html`${item.image
-        ? html`<img class="preview" src="/media/${item.image}" alt="Image for the Instagram post">`
-        : html`<p class="warn">Instagram posts need an image before they can be marked ready.</p>`}
-  ${editable
-        ? html`<form method="post" action="/items/${item.id}/image" enctype="multipart/form-data" class="inline">
-    <input type="file" name="image" accept="image/jpeg" required>
-    <button class="secondary">Upload JPEG</button>
-    <span class="muted">Up to 8 MB. Aspect ratio between 4:5 and 1.91:1.</span>
-  </form>`
-        : ''}`
-    : ''}
+  ${item.channel === 'instagram' ? (carousel ? carouselSummary(carousel) : singleImage(item, editable)) : ''}
   ${editable
     ? html`<form method="post" action="/items/${item.id}" class="stack">
     <textarea name="body" rows="9" maxlength="10000" aria-label="${label} post text">${item.body}</textarea>
     <p class="muted">${postLength(item.channel, item.body)} / ${max} characters${item.channel === 'x' ? ' (emoji and non-Latin characters count as 2)' : ''}</p>
+    ${carousel?.finals.length && carousel.status === 'ready' ? checklistFields() : ''}
     <div class="actions">
       <button name="action" value="save" class="secondary">Save</button>
       <button name="action" value="ready">Mark ready</button>
@@ -420,9 +469,9 @@ ${usage.rows.length
   <thead><tr><th>Agent</th><th>Model</th><th>Calls</th><th>Input tokens</th><th>Cached reads</th><th>Output tokens</th><th>Web searches</th><th>Avg. seconds</th><th>Est. cost</th></tr></thead>
   <tbody>${usage.rows.map((r) => html`<tr><td>${r.name}</td><td>${r.model}</td><td>${n(r.calls)}</td><td>${n(r.input + r.cache_write)}</td><td>${n(r.cache_read)}</td><td>${n(r.output)}</td><td>${n(r.searches)}</td><td>${(r.ms / 1000).toFixed(1)}</td><td>${r.cost == null ? 'No price' : money(r.cost)}</td></tr>`)}</tbody>
 </table>
-<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}${usage.perDraft == null ? '' : `Article agent: ${money(usage.perDraft)} and ${Math.max(1, Math.round(usage.draftMinutes))} min per draft on average, over ${usage.drafts} draft${usage.drafts === 1 ? '' : 's'}. `}Estimated at each model's list price.${usage.unpriced ? ' Calls served by a model with no listed price are left out of the total.' : ''}</p>`
+<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}${usage.perDraft == null ? '' : `Article agent: ${money(usage.perDraft)} and ${Math.max(1, Math.round(usage.draftMinutes))} min per draft on average, over ${usage.drafts} draft${usage.drafts === 1 ? '' : 's'}. `}${usage.perCarousel == null ? '' : `Carousels: ${money(usage.perCarousel)} and ${Math.max(1, Math.round(usage.carouselMinutes))} min each on average (until first ready), over ${usage.carousels} carousel${usage.carousels === 1 ? '' : 's'}. `}Estimated at each model's list price.${usage.unpriced ? ' Calls served by a model with no listed price are left out of the total.' : ''}</p>`
     : html`<p class="muted">No AI calls in the last 7 days.</p>`}
-<p class="muted">Models now: writers ${usage.models.writer}, article writer ${usage.models.article}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, coach ${usage.models.coach}. Change them with the MODEL_WRITER, MODEL_ARTICLE_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE and MODEL_COACH settings.</p>
+<p class="muted">Models now: writers ${usage.models.writer}, article writer ${usage.models.article}, carousel writer ${usage.models.carousel}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, picture check ${usage.models.imageCheck}, coach ${usage.models.coach}, carousel pictures ${usage.models.picture}. Change them with the MODEL_WRITER, MODEL_ARTICLE_WRITER, MODEL_CAROUSEL_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE, MODEL_IMAGE_CHECK, MODEL_COACH and GEMINI_IMAGE_MODEL settings.</p>
 <h2>Audit log</h2>
 ${auditLog.length
     ? html`<ol class="timeline">${auditLog.map((a) => html`<li><time>${a.at} UTC</time> ${a.who ?? 'System'}: ${a.action.replaceAll('_', ' ')}${a.detail ? html`, ${a.detail}` : ''}</li>`)}</ol>`
@@ -515,6 +564,101 @@ ${d.inputs.length
 <ul class="inputs">${d.inputs.map((i) => html`<li>${inputLine({ kind: i.kind, ref_id: i.ref, label: i.label }, user)}</li>`)}</ul></details>`
     : ''}
 <details${running ? raw(' open') : ''}><summary>Progress log</summary><p class="pre log">${d.log}</p></details>`, { refresh: running ? 10 : null });
+}
+
+// ---------- Instagram carousels ----------
+
+function slideCard(c, s, i, { edit, pictures }) {
+  const n = i + 1;
+  return html`<div class="slide">
+  ${s.picture
+    ? html`<img src="/carousels/${c.id}/pictures/${s.picture}" alt="Picture for slide ${n}">`
+    : html`<div class="blank">${pictures ? 'No picture yet' : 'Colour background'}</div>`}
+  <div class="stack">
+    <p><strong>Slide ${n}</strong> ${s.check ? (s.check.ok ? pill('Picture check passed', 'ready') : pill('Picture flagged', 'failed')) : ''}${s.check?.tries > 1
+      ? html` <span class="muted">after ${s.check.tries} tries</span>`
+      : ''}</p>
+    ${s.check && !s.check.ok ? html`<ul class="warn">${s.check.notes.map((note) => html`<li>${note}</li>`)}</ul>` : ''}
+    ${edit
+      ? html`<label>Heading <input name="heading_${i}" value="${s.heading}" maxlength="60" required></label>
+    <label>Text <textarea name="body_${i}" rows="3" maxlength="180">${s.body}</textarea></label>
+    <label>Picture brief <textarea name="brief_${i}" rows="2" maxlength="300">${s.brief}</textarea></label>
+    ${pictures && c.status === 'ready' ? html`<div class="actions"><button name="action" value="picture_${i}" class="secondary">New picture</button></div>` : ''}`
+      : html`<p class="post"><strong>${s.heading}</strong>${s.body ? html`<br>${s.body}` : ''}</p>
+    <p class="muted">Picture brief: ${s.brief}</p>`}
+  </div>
+</div>`;
+}
+
+export function carouselPage(user, { carousel: c, article: a, editable, glass, pictures }) {
+  const working = c.status === 'working';
+  const ready = c.status === 'ready';
+  const edit = editable && ['ready', 'needs_attention'].includes(c.status);
+  const finalFlagged = c.final_check.filter((r) => !r.ok).length;
+  const save = html`<div class="actions"><button name="action" value="save">Save and check</button></div>`;
+  return layout(`Carousel: ${a.title}`, user, html`
+<p><a href="/articles/${a.id}">← ${a.title}</a></p>
+<h1>Instagram carousel</h1>
+<p class="meta">${carouselPill(c.status)} ${c.slides.length ? `${c.slides.length} slides · ` : ''}Started by ${c.author} at ${c.started_at} UTC${c.finished_at
+    ? `, first ready after ${Math.max(1, Math.round(c.seconds / 60))} min`
+    : ''}${c.cost == null ? '' : ` · AI cost ${money(c.cost)}`}</p>
+${working ? html`<p class="note">${CAROUSEL_JOB[c.job]}. This page refreshes by itself.</p>` : ''}
+${c.error ? html`<p class="error">${c.error}</p>` : ''}
+${c.status === 'failed' && editable ? html`<form method="post" action="/carousels/${c.id}"><button name="action" value="retry">Try again</button></form>` : ''}
+${c.notes ? html`<p class="${c.compliance_ok ? 'ok' : 'warn'} pre">${c.notes}</p>` : ''}
+${pictures ? '' : html`<p class="note">Pictures are off because GEMINI_API_KEY is not set: the deck uses colour backgrounds, and nothing is spent on pictures.</p>`}
+<h2>1. Slides</h2>
+${!c.slides.length
+    ? html`<p class="muted">${working ? 'The slides appear here once they are written.' : 'No slides.'}</p>`
+    : edit
+      ? html`<form method="post" action="/carousels/${c.id}" class="stack">
+  <p class="muted">Changed wording goes back to the compliance agent when you save. New picture uses the slide's picture brief.</p>
+  ${save}
+  <div class="slides">${c.slides.map((s, i) => slideCard(c, s, i, { edit, pictures }))}</div>
+  ${save}
+</form>`
+      : html`<div class="slides">${c.slides.map((s, i) => slideCard(c, s, i, { edit: false, pictures }))}</div>`}
+<h2>2. Design the slides in Glass Slides</h2>
+${ready
+    ? html`<div class="actions">
+  ${glass ? html`<form method="post" action="/carousels/${c.id}/link" target="_blank"><button>Open in Glass Slides</button></form>` : ''}
+  <a class="button${glass ? ' secondary' : ''}" href="/carousels/${c.id}/deck.json">Download the deck file</a>
+</div>
+<p class="muted">Each slide has the picture, a frosted panel with the heading and text, and a slide counter, as separate layers you can move and restyle. When the slides look right, choose <strong>Export → Export all</strong> with the format <strong>JPEG</strong> at <strong>1×</strong> (1080×1350). ${glass
+      ? 'The Open link works for 30 minutes.'
+      : 'In Glass Slides, open the deck file with File → Open.'}</p>`
+    : html`<p class="muted">Available once the slide text has passed the compliance check${pictures ? ' and the pictures are made' : ''}.</p>`}
+<h2>3. Upload the finished slides</h2>
+${ready && editable
+    ? html`<form method="post" action="/carousels/${c.id}/slides" enctype="multipart/form-data" class="inline">
+  <input type="file" name="slides" accept=".zip,image/jpeg" multiple required aria-label="Finished slides">
+  <button class="secondary">Upload</button>
+  <span class="muted">The .zip that Export all saves, or the ${c.slides.length} JPEGs: 4:5 (1080×1350), up to 5 MB each.</span>
+</form>`
+    : ''}
+${c.finals.length
+    ? html`<div class="finals">${c.finals.map((name, i) => {
+      const result = c.final_check[i];
+      return html`<figure><img src="/media/${name}" alt="Finished slide ${i + 1}"><figcaption>${result
+        ? result.ok ? html`<span class="pass">✓ Wording matches</span>` : html`<span class="fail">⚠ ${result.note}</span>`
+        : working ? 'Checking…' : ''}</figcaption></figure>`;
+    })}</div>
+${ready && c.final_check.length
+      ? html`<p class="${finalFlagged ? 'warn' : 'ok'}">${finalFlagged
+        ? `The final text check flagged ${finalFlagged} slide${finalFlagged === 1 ? '' : 's'}: compare ${finalFlagged === 1 ? 'it' : 'them'} with the approved text above before you tick the checklist.`
+        : 'The final text check found that every slide matches the approved text.'}</p>`
+      : ''}`
+    : html`<p class="muted">No finished slides yet.</p>`}
+<h2>4. Tick the checklist and mark the post ready</h2>
+<p>On <a href="/articles/${a.id}">the article page</a>, the Instagram post shows the finished slides and the image checklist. Tick every box, then click Mark ready. Nothing is published until someone clicks Publish.</p>
+${editable && !working
+    ? html`<details><summary>Start over, or go back to a single image</summary>
+<form method="post" action="/carousels/${c.id}" class="actions">
+  <button name="action" value="restart" class="secondary">Start over with new slides</button>
+  <button name="action" value="discard" class="secondary">Remove the carousel</button>
+</form></details>`
+    : ''}
+<details${working ? raw(' open') : ''}><summary>Progress log</summary><p class="pre log">${c.log}</p></details>`, { refresh: working ? 10 : null });
 }
 
 // ---------- admin: web sources ----------

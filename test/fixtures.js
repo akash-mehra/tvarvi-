@@ -66,3 +66,90 @@ export const research = (extraFetch = []) => [
         },
   ]),
 ];
+
+// ---------- carousels ----------
+
+// The carousel writer's JSON: `n` slides, the last with the disclaimer.
+export const slideSet = (n = 6) => ({
+  slides: Array.from({ length: n }, (_, i) => ({
+    heading: i === 0 ? 'Iron and energy: what to know' : `Point ${i}: iron and your day`,
+    body: i === n - 1 ? 'General information, not medical advice. Full article: link in bio.' : `Short approved text for slide ${i + 1}.`,
+    picture: `A calm still life of leafy greens and beans for slide ${i + 1}`,
+  })),
+});
+
+// The start of a PNG (all the app looks at) and a JPEG whose frame header says width × height.
+export const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000003a000000480080200000000', 'hex');
+export function jpeg(width = 1080, height = 1350, filler = 64) {
+  const app0 = Buffer.from('ffe000104a46494600010100000100010000', 'hex');
+  const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof, Buffer.from([0xff, 0xda, 0x00, 0x02]), Buffer.alloc(filler, 0x11), Buffer.from([0xff, 0xd9])]);
+}
+
+// A .zip like Glass Slides' "Export all" (stored), or deflated like one re-zipped by an operating system.
+export async function zip(files, { deflate = false } = {}) {
+  const { crc32, deflateRawSync } = await import('node:zlib');
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const { name, bytes } of files) {
+    const nameBytes = Buffer.from(name);
+    const data = deflate ? deflateRawSync(bytes) : bytes;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(deflate ? 8 : 0, 8);
+    local.writeUInt32LE(crc32(bytes), 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(bytes.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(20, 4); entry.writeUInt16LE(20, 6); entry.writeUInt16LE(deflate ? 8 : 0, 10);
+    entry.writeUInt32LE(crc32(bytes), 16); entry.writeUInt32LE(data.length, 20); entry.writeUInt32LE(bytes.length, 24);
+    entry.writeUInt16LE(nameBytes.length, 28); entry.writeUInt32LE(offset, 42);
+    parts.push(local, nameBytes, data);
+    central.push(entry, nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const size = central.reduce((sum, b) => sum + b.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(size, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, ...central, end]);
+}
+
+// Which agent a scripted Claude call is for, from its tools or output schema.
+export function agentOf(params) {
+  const schema = params.output_config?.format?.schema;
+  if (!schema) return params.tools?.some((t) => t.name === 'submit_post') ? 'post writer' : 'other';
+  if (schema.properties.problems) return 'picture check';
+  if (schema.properties.approved) return 'compliance';
+  return schema.properties.slides.items.properties.heading ? 'carousel writer' : 'final check';
+}
+
+// What Glass Slides' normaliseDoc keeps (index.html, "loading & validation"): a deck that passes loads layer for layer.
+export function glassProblems(deck, fonts = ['Inter']) {
+  const problems = [];
+  const inRange = (v, lo, hi, what) => (typeof v === 'number' && v >= lo && v <= hi) || problems.push(`${what} out of range: ${v}`);
+  inRange(deck.w, 64, 8000, 'w');
+  inRange(deck.h, 64, 8000, 'h');
+  if (!Array.isArray(deck.slides) || !deck.slides.length || deck.slides.length > 200) problems.push('slides');
+  deck.fonts.forEach((f) => fonts.includes(f) || problems.push(`font ${f}`));
+  deck.slides.forEach((s, i) => {
+    if (!/^#[0-9a-f]{6}$/i.test(s.base)) problems.push(`slide ${i} base`);
+    if (s.els.length > 500) problems.push(`slide ${i} layers`);
+    s.els.forEach((e) => {
+      const where = `slide ${i} ${e.name}`;
+      if (!['glass', 'text', 'image', 'shape'].includes(e.type)) problems.push(`${where} type`);
+      inRange(e.x, -20000, 20000, `${where} x`);
+      inRange(e.y, -20000, 20000, `${where} y`);
+      inRange(e.w, 4, 20000, `${where} w`);
+      inRange(e.h, 4, 20000, `${where} h`);
+      if (e.type === 'image' && !/^data:image\//i.test(e.src)) problems.push(`${where}: images must be data: URIs`);
+      if (e.type === 'glass' && !['rect', 'circle', 'pill'].includes(e.shape)) problems.push(`${where} shape`);
+      if (e.type === 'text') {
+        inRange(e.size, 4, 1200, `${where} size`);
+        if (![100, 200, 300, 400, 500, 600, 700, 800, 900].includes(e.weight)) problems.push(`${where} weight`);
+        if (!/^#[0-9a-f]{6}$/i.test(e.color)) problems.push(`${where} color`);
+        if (e.text.length > 20000 || /[;{}<>]/.test(e.font)) problems.push(`${where} text or font`);
+      }
+    });
+  });
+  return problems;
+}

@@ -12,6 +12,17 @@ export const CHANNELS = {
 export const SOCIAL = ['instagram', 'linkedin', 'x'];
 export const KNOWLEDGE_KINDS = { brand_rule: 'Brand rule', compliance_rule: 'Compliance rule', example: 'Example' };
 
+// What the reviewer confirms, box by box, before a carousel can be marked ready.
+export const CAROUSEL_CHECKLIST = [
+  ['no_text', 'No text, letters or garbled writing in any picture'],
+  ['medical', 'No misleading medical pictures'],
+  ['people', 'No identifiable people'],
+  ['brands', 'No logos or brands'],
+  ['safe', 'Nothing graphic or unsafe for Instagram'],
+  ['match', 'Every picture matches its slide'],
+  ['wording', 'The words on the finished slides match the approved slide text'],
+];
+
 // X counts emoji and most non-Latin characters as 2. This errs on the long side, never the short.
 export function xLength(text) {
   let length = 0;

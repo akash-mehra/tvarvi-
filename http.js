@@ -3,6 +3,15 @@ import { Readable } from 'node:stream';
 
 export const BASE = new URL(process.env.PUBLIC_BASE_URL || 'http://localhost:3000');
 export const SECURE = BASE.protocol === 'https:';
+
+// The Glass Slides editor (optional). Its origin may read a carousel deck through a link token, and the
+// "Open in Glass Slides" button redirects there.
+export const GLASS = (() => {
+  if (!process.env.GLASS_SLIDES_URL) return null;
+  const url = new URL(process.env.GLASS_SLIDES_URL);
+  if (url.protocol !== 'https:' && url.hostname !== 'localhost') throw new Error('GLASS_SLIDES_URL must be an https:// address.');
+  return url;
+})();
 const FORM_LIMIT = 1024 * 1024;
 
 export class HttpError extends Error {

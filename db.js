@@ -258,6 +258,31 @@ const MIGRATIONS = [
   CREATE INDEX drafts_by_article ON drafts(article_id);
   ALTER TABLE ai_calls ADD COLUMN draft_id INTEGER REFERENCES drafts(id);
   `,
+  `
+  -- Instagram carousels: slide text by AI (compliance-checked), pictures by Gemini (checked by AI), slides designed
+  -- in Glass Slides and uploaded, then ticked off by the reviewer. One per Instagram post; "start over" reuses the row.
+  CREATE TABLE carousels (
+    id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL UNIQUE REFERENCES items(id),
+    status TEXT NOT NULL DEFAULT 'working'
+      CHECK (status IN ('working','ready','needs_attention','failed','discarded')),
+    job TEXT NOT NULL DEFAULT 'write' CHECK (job IN ('write','check','picture','final')),
+    slides TEXT NOT NULL DEFAULT '[]',
+    finals TEXT NOT NULL DEFAULT '[]',
+    final_check TEXT NOT NULL DEFAULT '[]',
+    checklist TEXT,
+    notes TEXT,
+    compliance_ok INTEGER,
+    link_hash TEXT,
+    link_expires INTEGER,
+    error TEXT,
+    log TEXT NOT NULL DEFAULT '',
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT
+  );
+  ALTER TABLE ai_calls ADD COLUMN carousel_id INTEGER REFERENCES carousels(id);
+  `,
 ];
 
 // Foreign keys are off while migrating (SQLite's documented way to rebuild a table) and checked before each commit.
@@ -315,4 +340,5 @@ export function recoverInterrupted() {
   run(`UPDATE digests SET status = 'failed', note = 'Interrupted by a restart.' WHERE status = 'running'`);
   run(`UPDATE drafts SET status = 'failed', error = 'Interrupted by a restart. Click Try again.', finished_at = CURRENT_TIMESTAMP
        WHERE status = 'running'`);
+  run(`UPDATE carousels SET status = 'failed', error = 'Interrupted by a restart. Click Try again.' WHERE status = 'working'`);
 }

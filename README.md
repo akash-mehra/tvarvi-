@@ -8,7 +8,7 @@ This app runs the company's content workflow from the "human input" diagram:
    - **edits the article or asks for a second opinion**. It goes back to the admin, who sees the old and new versions (added lines green, removed lines red) and reassigns it, or
    - **approves it unchanged**.
 4. Approval starts three **AI agent complexes**, one each for Instagram, LinkedIn and X. In each one, a *writer agent* (platform algorithm and SEO) drafts a post and a *compliance agent* (medical accuracy) reviews it, for up to 3 rounds.
-5. The reviewer edits the posts if needed and marks all four items ready: the website article plus three posts.
+5. The reviewer edits the posts if needed and marks all four items ready: the website article plus three posts. The Instagram post is either a single image or a **carousel** (see [Instagram carousels](#instagram-carousels)).
 6. **Trusted people publish** each item with its own button. If the reviewer can't publish, or wants a final look, the set goes to the **publisher dashboard**.
 
 Every step is recorded in each article's history.
@@ -34,11 +34,14 @@ Each agent's model is set with an environment variable:
 |---|---|---|
 | `MODEL_WRITER` | Social post writers | `claude-sonnet-5` |
 | `MODEL_ARTICLE_WRITER` | Article agent (research and writing) | `claude-sonnet-5` |
+| `MODEL_CAROUSEL_WRITER` | Carousel slide text | `claude-sonnet-5` |
 | `MODEL_TREND_SCOUT` | Trend scouts | `claude-sonnet-5` |
-| `MODEL_COMPLIANCE` | Compliance agent | `claude-opus-5` |
+| `MODEL_COMPLIANCE` | Compliance agent (posts, articles and carousel text) | `claude-opus-5` |
+| `MODEL_IMAGE_CHECK` | Carousel picture check and final text check | `claude-sonnet-5` |
 | `MODEL_COACH` | Weekly coach | `claude-opus-5` |
+| `GEMINI_IMAGE_MODEL` | Carousel pictures (Gemini) | `gemini-3.1-flash-image` |
 
-- **Supported models:** `claude-fable-5-1`, `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5` and `claude-sonnet-4-6`. Any other value stops the app at startup with an error.
+- **Supported models:** `claude-fable-5-1`, `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5` and `claude-sonnet-4-6`; for pictures, `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image` and `gemini-3-pro-image`. Any other value stops the app at startup with an error.
 - **Refusal fallback:** requests to the Opus 5, Opus 5.5 and Fable 5.1 models ask the API to retry a safety-classifier refusal on a fallback model; the other models don't use that feature.
 - **Recorded model:** every AI call records the model that actually served it (a fallback can differ from the one requested).
 - **Changing a model:** set the variable (on Railway: Variables) and redeploy.
@@ -112,6 +115,44 @@ On the dashboard, a writer types a topic or keyword under **Draft an article wit
 
 The social posts for the article cost extra after approval (see the cost estimates under "One-week trial on Railway").
 
+## Instagram carousels
+
+After an article is approved, its assigned reviewer can click **Make a carousel instead** on the Instagram post. The carousel replaces the single image; the post's text stays the caption.
+
+1. **Slide text.** The carousel writer (`MODEL_CAROUSEL_WRITER`) turns the approved article into 5–10 slides: a cover, one point per slide, and a last slide with "General information, not medical advice" and "Full article: link in bio". Each slide has a heading (at most 60 characters), text (at most 180) and a brief for its picture.
+   - Code checks the count, the lengths, and that there are no links or hashtags and the last slide has the disclaimer; the writer fixes what fails.
+   - The **compliance agent** then checks every slide against the article, the compliance rules and the approved regulator pages. The writer revises, for at most 3 reviews; after that the carousel shows **Needs attention** with the issues, and no pictures are made until the text passes.
+2. **Pictures.** Gemini (`GEMINI_IMAGE_MODEL`, through its REST API with Node's `fetch`) makes one 4:5 picture per slide, 3 at a time, from the slide's brief. The prompt forbids any text, identifiable people, logos, procedures, needles, blood, marked pills and anatomy diagrams: every word on a slide stays an editable text layer.
+3. **Picture check.** `MODEL_IMAGE_CHECK` looks at each picture next to its slide and flags text or garbled lettering, misleading medical pictures, identifiable people, logos or brands, graphic or unsafe content, and pictures that don't fit the slide. A flagged picture is made again with the check's notes, up to 2 more times. One still flagged is kept, marked ⚠ with the notes for the reviewer.
+4. **Review.** The carousel page shows each slide's picture, text and check result. The reviewer can edit the text (saving sends changed wording back to the compliance agent) or ask for a **New picture** from an edited brief.
+5. **Design in Glass Slides.** **Open in Glass Slides** opens the deck in the editor (a link that works for 30 minutes), or **Download the deck file** and open it there. Each slide has the picture, a frosted panel with the heading and text, and a counter, all as separate layers. The designer adjusts them and uses **Export → Export all**, format **JPEG**, scale **1×**.
+6. **Upload** the .zip that Export all saves (or the JPEGs). Tvarvi checks there is one JPEG per slide, 4:5 at 1080×1350, at most 5 MB each.
+7. **Final text check.** `MODEL_IMAGE_CHECK` reads every finished slide and flags wording that differs from the approved text, or text that is cut off or unreadable, since words can change in Glass Slides after the compliance check. It advises; the reviewer decides.
+8. **Checklist.** On the article page, the Instagram post shows the finished slides and seven boxes: no text in pictures, no misleading medical pictures, no identifiable people, no logos or brands, nothing graphic or unsafe, each picture matches its slide, and the finished wording matches the approved text. **Mark ready** needs every box. The ticks are saved and written to the article history. Any later change to the carousel sets the post back to draft, so it is ticked again.
+9. **Publish** works as for every post: a person clicks Publish. Tvarvi creates one Instagram container per slide and a `CAROUSEL` container with them and the caption, then publishes it. In trial mode it is simulated.
+
+**Glass Slides setup.** Set `GLASS_SLIDES_URL` to the editor's address (for example `https://glass-slides.singh-akash0717.workers.dev`). Glass Slides then fetches the deck from `PUBLIC_BASE_URL/glass/t/<token>`:
+- The token is random, stored only as a hash, works for 30 minutes and is replaced by the next click.
+- Only the editor's origin may read the answer (CORS), and no cookies are involved.
+- Pictures travel inside the deck, because Glass Slides only accepts embedded images: about 1–2 MB per slide as PNG.
+- One-click opening needs the Glass Slides change that stops a link from replacing that browser's share address and trusts Tvarvi's address. Without it, Glass Slides asks before opening and then keeps Tvarvi as its share address until reset in its Share dialog. **Download the deck file** always works.
+
+Without `GEMINI_API_KEY` no pictures are made: the deck uses colour backgrounds and nothing is spent on pictures, so the whole flow can be tried first. Raw Gemini pictures are only shown to people who can see the article; the finished slides are public at `/media/...` because Instagram downloads them from there.
+
+**Limits:**
+- 5 to 10 slides (Instagram's API takes at most 10 per carousel), 4:5 only.
+- 5 slide versions and 3 compliance reviews per run; 3 pictures per slide per run; 50 pictures per carousel from its last start.
+- One job at a time per carousel. A carousel interrupted by a restart is marked failed, with a **Try again** button that keeps text that already passed.
+
+**Cost and time per carousel** (estimates for 7 slides with the default models, prices checked in September 2026; the carousel page and the Training page show the measured numbers):
+- about **$0.95** and **4 minutes** typically (1–2 pictures made again, one compliance fix)
+- about $0.75 and 3 minutes when everything passes the first time
+- about $2.80 and 10 minutes in the worst realistic case (10 slides, every picture tried 3 times, 3 reviews)
+- at most about $4.30 when the 50-picture limit is reached
+- each saved text edit adds about $0.15 (one compliance review), each New picture $0.07–0.20
+- Gemini pictures are $0.067 each on Flash Image, $0.034 on Flash-Lite Image, $0.134 on Pro Image; a picture check is about $0.008
+- plus the designer's time in Glass Slides, and about 2 minutes to upload and tick the checklist
+
 **Later phase (not built):** the official Instagram Insights API for your own posts' reach and saves. It will write into the same engagement table, so `get_top_posts` picks it up unchanged. The Hashtag Search API needs Meta's approval and has a weekly hashtag cap. Instagram is never scraped.
 
 ## Run locally
@@ -136,6 +177,7 @@ Log in, open **Team**, and add writers, reviewers and publishers. Roles are chec
    - `PUBLIC_BASE_URL=https://<your-app>.up.railway.app`
    - `ANTHROPIC_API_KEY`
    - `DRY_RUN_CHANNELS=website,instagram,linkedin,x`
+   - optional, for carousels: `GEMINI_API_KEY` and `GLASS_SLIDES_URL`
 4. Open the service shell and run `npm run create-admin -- you@company.com "Your Name"`.
 
 With every channel in `DRY_RUN_CHANNELS`, the team can use the whole workflow while nothing is posted: items show **Published (Simulated)**. Switch a channel to live by setting its keys and removing it from the list.
@@ -144,10 +186,12 @@ Costs during the trial:
 - **Claude API:** billed per use. Set a spend limit in the Anthropic Console. The Training page shows the measured cost per article. Estimates:
   - about **$0.35–0.55 per article** (3 posts), and about $1.10 in the worst case, with the default models. With every agent on Opus 5 it is $0.60–1.00.
   - about **$0.90 for each article-agent draft** (see [Article agent](#article-agent))
+  - about **$0.95 for each Instagram carousel**, Gemini pictures included (see [Instagram carousels](#instagram-carousels))
   - about **$0.15–0.35 for each weekly digest**, and $0 when a week is skipped
   - about 1–2 minutes from approval until the posts are ready
 - **Web search:** $10 per 1,000 searches, at most 2 per post and usually 4–6 per article draft. Web fetch costs only tokens.
 - **X:** charges per post, but only once X is live.
+- **Gemini:** billed per picture on the Google project of `GEMINI_API_KEY`; set a budget there too.
 - **Instagram, LinkedIn, webhook:** free.
 
 Don't use Render's free tier: it wipes the disk (database and images) whenever the app sleeps.
@@ -157,7 +201,7 @@ Don't use Render's free tier: it wipes the disk (database and images) whenever t
 | Channel | What you need |
 |---|---|
 | **X** | A developer account with pay-per-use credits and an app with "Read and write" permission. Generate the access token and secret for the company account. These keys don't expire. |
-| **Instagram** | A professional (business or creator) account and a Meta app with content publishing permission (`instagram_business_content_publish`, or `instagram_content_publish` via Facebook Login). Set `IG_API_BASE`, `IG_USER_ID` and `IG_ACCESS_TOKEN`. Instagram fetches images from `PUBLIC_BASE_URL/media/...`, so the app must be reachable from the internet. |
+| **Instagram** | A professional (business or creator) account and a Meta app with content publishing permission (`instagram_business_content_publish`, or `instagram_content_publish` via Facebook Login). Set `IG_API_BASE`, `IG_USER_ID` and `IG_ACCESS_TOKEN`. Instagram fetches images from `PUBLIC_BASE_URL/media/...`, so the app must be reachable from the internet. A carousel counts as one post against Instagram's limit of 50 API posts a day. |
 | **LinkedIn** | Posting to a company page needs LinkedIn to approve the Community Management API (`w_organization_social`). Until then, post as a person (`w_member_social`, `urn:li:person:<id>`) or keep LinkedIn in trial mode. |
 | **Website** | Your site adds one endpoint; see below. |
 
@@ -203,7 +247,7 @@ export async function POST(request) {
 
 ## How it's built
 
-- Node built-ins only (`node:http`, `node:sqlite`, `node:crypto`, `fetch`), plus `@anthropic-ai/sdk`.
+- Node built-ins only (`node:http`, `node:sqlite`, `node:crypto`, `node:zlib`, `fetch`), plus `@anthropic-ai/sdk`. Gemini is called over its REST API with `fetch`.
 - Server-rendered HTML forms with no client JavaScript.
 - AI uses Claude with tool use (strict schemas), structured JSON output and prompt caching, with one model per agent (see [AI models](#ai-models)). There is no agent framework.
 - Background jobs (the daily compliance check and the weekly digest) run inside the app. Set `BACKGROUND_JOBS=off` on any extra instance.
@@ -220,6 +264,8 @@ export async function POST(request) {
 | `admin.js` | Training, Sources and Suggestions pages |
 | `ai.js` | trend scout, writer and compliance agents; model settings and prices |
 | `article.js` | article agent: research, cited draft, code checks, compliance review |
+| `carousel.js` | carousel agent: slide text, pictures and their checks, Glass Slides deck, slide upload, final text check |
+| `gemini.js` | Gemini pictures over REST |
 | `tools.js` | read-only agent tools |
 | `knowledge.js` | versioned rules and examples |
 | `sources.js` | web sources and compliance snapshots |
@@ -240,4 +286,5 @@ GitHub Actions runs the same tests on Node 22 for every pull request and every p
 
 - **Links:** posts don't include the article link automatically. Add it while editing if you want one; on X a link raises the post price.
 - **Notifications:** there are none, so people check their dashboard.
+- **Carousel slides** come back from Glass Slides by upload; there is no automatic upload.
 - **Scale:** it runs as a single instance, which suits a team tool. Back up `DATA_DIR/app.db` regularly.
