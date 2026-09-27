@@ -146,3 +146,24 @@ summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .evidence td { vertical-align: top; }
 .evidence td p { margin: 0 0 6px; }
 .log { font-size: 0.85em; }
+
+/* v4: carousels */
+.slides { display: grid; gap: 12px; }
+.slide { display: grid; grid-template-columns: 200px 1fr; gap: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+.slide img, .slide .blank { width: 200px; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 6px; }
+.slide .blank { display: grid; place-items: center; background: var(--bg); color: var(--muted); font-size: 0.9rem; }
+.slide p, .slide ul { margin: 0; }
+.slide ul.warn { padding-left: 28px; }
+@media (max-width: 700px) { .slide { grid-template-columns: 1fr; } }
+.finals, .strip { display: flex; flex-wrap: wrap; gap: 8px; }
+.finals figure { margin: 0; width: 160px; font-size: 0.85rem; }
+.finals img, .strip img { width: 160px; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+.strip img { width: 64px; }
+.pass { color: var(--add-text); }
+.fail { color: var(--del-text); }
+.checklist { display: grid; gap: 4px; }
+a.button {
+  display: inline-block; font-weight: 600; text-decoration: none;
+  background: var(--accent); color: var(--accent-text); border: 1px solid var(--accent); border-radius: 6px; padding: 8px 14px;
+}
+a.button.secondary { background: transparent; color: var(--accent); }

@@ -163,7 +163,7 @@ test('article goes from writer to published, following the diagram', async (t) =
     assert.match(page, /<td>Writer<\/td><td>claude-sonnet-5<\/td><td>9<\/td>/);
     // 9 Sonnet calls at $0.004 + 6 Opus calls at $0.01 (1,000 input and 200 output tokens each); all-Opus would be $0.15.
     assert.match(page, /Average cost per article: \$0\.10 over 1 article/);
-    assert.match(page, /Models now: writers claude-sonnet-5, article writer claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5, coach claude-opus-5/);
+    assert.match(page, /Models now: writers claude-sonnet-5, article writer claude-sonnet-5, carousel writer claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5, picture check claude-sonnet-5, coach claude-opus-5, carousel pictures gemini-3\.1-flash-image/);
   });
 
   const item = (channel) => one('SELECT * FROM items WHERE channel = ?', channel);

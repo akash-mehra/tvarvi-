@@ -7,18 +7,24 @@ import { promisify } from 'node:util';
 import * as admin from './admin.js';
 import { generateItem } from './ai.js';
 import { DraftError, getDraft, startDraft } from './article.js';
+import {
+  carouselByLink, carouselFor, deckJson, discardCarousel, editSlides, getCarousel, LIMITS, newLink, newPicture, readSlides,
+  readyProblems, recordChecklist, retryCarousel, saveFinals, startCarousel,
+} from './carousel.js';
 import { runDigest } from './coach.js';
 import { all, logEvent, one, recoverInterrupted, run, tx, UPLOADS } from './db.js';
-import { BASE, backLink, count, fail, field, HttpError, oneOf, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
+import { imageType } from './gemini.js';
+import { BASE, backLink, count, fail, field, GLASS, HttpError, oneOf, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
 import { createEntry, latestMetrics } from './knowledge.js';
 import { publishItem } from './publish.js';
 import { checkAllSources, researchSources } from './sources.js';
-import { CHANNELS, limitProblems, SOCIAL } from './text.js';
+import { CAROUSEL_CHECKLIST, CHANNELS, limitProblems, slugify, SOCIAL } from './text.js';
 import * as view from './views.js';
 
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const LOCK_MS = 15 * 60 * 1000;
 const IMAGE_LIMIT = 8 * 1024 * 1024;
+const SLIDES_LIMIT = 40 * 1024 * 1024; // one upload of finished carousel slides
 const FLAGS = ['is_admin', 'can_write', 'can_review', 'can_publish'];
 const EDITABLE = ['draft', 'failed', 'ready', 'publish_failed'];
 const PUBLISHABLE = ['ready', 'publishing', 'published', 'publish_failed'];
@@ -172,6 +178,7 @@ function describeItems(items) {
     ),
     metrics: latestMetrics(item.id),
     promoted: one('SELECT id FROM knowledge WHERE source_item_id = ?', item.id)?.id ?? null,
+    carousel: item.channel === 'instagram' ? carouselFor(item.id) : null,
   }));
 }
 
@@ -356,14 +363,20 @@ async function itemAction({ req, res, user, params: [id] }) {
 
   if (action === 'save' || action === 'ready') {
     const body = field(form, 'body', 'Post', 10_000, action === 'ready');
+    const carousel = item.channel === 'instagram' ? carouselFor(item.id) : null;
     if (action === 'ready') {
       const problems = limitProblems(item.channel, body);
-      if (item.channel === 'instagram' && !item.image) problems.push('Upload an image first. Instagram posts need one.');
+      if (carousel) {
+        problems.push(...readyProblems(carousel, CAROUSEL_CHECKLIST.map(([key]) => key).filter((key) => form.get(`check_${key}`) === '1')));
+      } else if (item.channel === 'instagram' && !item.image) {
+        problems.push('Upload an image or make a carousel first. Instagram posts need one.');
+      }
       if (problems.length) fail(400, problems.join(' '));
     }
     tx(() => {
       updateItem(item, `UPDATE items SET body = ?, error = NULL, status = ?, reviewed_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE reviewed_at END`,
         body, action === 'ready' ? 'ready' : 'draft', action === 'ready' ? 1 : 0);
+      if (action === 'ready' && carousel) logEvent(a.id, user.id, 'carousel_checked', recordChecklist(carousel, user.id));
       logEvent(a.id, user.id, action === 'ready' ? 'ready' : 'edited', label);
       if (action === 'ready') handOffIfDone(a, user);
     });
@@ -418,7 +431,8 @@ async function publish(res, user, a, item) {
   const { changes } = run(`UPDATE items SET status = 'publishing', error = NULL WHERE id = ? AND status IN ('ready', 'publish_failed')`, item.id);
   if (!changes) return redirect(res, `/articles/${a.id}`);
   try {
-    const { url, simulated } = await publishItem(item, a, BASE);
+    const slides = item.channel === 'instagram' ? carouselFor(item.id)?.finals ?? [] : [];
+    const { url, simulated } = await publishItem({ ...item, slides }, a, BASE);
     tx(() => {
       run(
         `UPDATE items SET status = 'published', external_url = ?, simulated = ?, published_by = ?, published_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -465,6 +479,130 @@ async function uploadImage({ req, res, user, params: [id] }) {
   }
   if (item.image) await unlink(join(UPLOADS, item.image)).catch(() => {});
   redirect(res, `/articles/${a.id}`);
+}
+
+// ---------- Instagram carousels ----------
+
+// Anyone who can see the article can see its carousel.
+function findCarousel(user, id) {
+  const c = getCarousel(Number(id)) ?? fail(404, 'Carousel not found.');
+  const a = getArticle(c.article_id);
+  if (!canView(user, a)) fail(403, 'You do not have access to this carousel.');
+  return { c, a, item: one('SELECT * FROM items WHERE id = ?', c.item_id) };
+}
+
+// Only the assigned reviewer changes it, while the article is approved and the post can still change.
+function expectCarouselEditor(user, a, item) {
+  if (!isReviewer(user, a)) fail(403, 'Only the assigned reviewer can change the carousel.');
+  expectStatus(a, 'approved');
+  if (!EDITABLE.includes(item.status)) fail(409, 'This post cannot be changed right now.');
+}
+
+function createCarousel({ res, user, params: [id] }) {
+  const item = one('SELECT * FROM items WHERE id = ?', Number(id)) ?? fail(404, 'Post not found.');
+  const a = getArticle(item.article_id);
+  if (item.channel !== 'instagram') fail(400, 'Only Instagram posts can be carousels.');
+  expectCarouselEditor(user, a, item);
+  const carouselId = startCarousel(item.id, user.id);
+  logEvent(a.id, user.id, 'carousel', 'Instagram');
+  redirect(res, `/carousels/${carouselId}`);
+}
+
+function carouselPage({ res, user, params: [id] }) {
+  const { c, a, item } = findCarousel(user, id);
+  send(res, view.carouselPage(user, {
+    carousel: c,
+    article: a,
+    editable: isReviewer(user, a) && a.status === 'approved' && EDITABLE.includes(item.status),
+    glass: !!GLASS,
+    pictures: !!process.env.GEMINI_API_KEY,
+  }));
+}
+
+async function carouselAction({ req, res, user, params: [id] }) {
+  const { c, a, item } = findCarousel(user, id);
+  expectCarouselEditor(user, a, item);
+  const form = await readForm(req);
+  const action = String(form.get('action') ?? '');
+  const picture = /^picture_(\d{1,2})$/.exec(action);
+  if (action === 'save' || picture) {
+    const edits = c.slides.map((_, i) => ({
+      heading: field(form, `heading_${i}`, `Slide ${i + 1} heading`, LIMITS.heading, false),
+      body: field(form, `body_${i}`, `Slide ${i + 1} text`, LIMITS.body, false),
+      brief: field(form, `brief_${i}`, `Slide ${i + 1} picture brief`, LIMITS.brief, false),
+    }));
+    if (picture) newPicture(c, Number(picture[1]), edits);
+    else editSlides(c, edits);
+  } else if (action === 'retry') {
+    if (c.status !== 'failed') fail(409, 'Only a failed carousel can be tried again.');
+    retryCarousel(c);
+  } else if (action === 'restart') {
+    startCarousel(item.id, user.id);
+    logEvent(a.id, user.id, 'carousel', 'started over');
+  } else if (action === 'discard') {
+    discardCarousel(c);
+    logEvent(a.id, user.id, 'carousel_removed', 'Instagram');
+    return redirect(res, `/articles/${a.id}`);
+  } else {
+    fail(400, 'Unknown action.');
+  }
+  redirect(res, `/carousels/${c.id}`);
+}
+
+// The finished slides from Glass Slides: its "Export all" .zip, or the JPEGs.
+async function uploadSlides({ req, res, user, params: [id] }) {
+  const { c, a, item } = findCarousel(user, id);
+  expectCarouselEditor(user, a, item);
+  const form = await readForm(req, SLIDES_LIMIT + 64 * 1024);
+  const files = form.getAll('slides').filter((file) => file instanceof File && file.size);
+  const slides = readSlides(await Promise.all(files.map(async (file) => ({ name: file.name, bytes: Buffer.from(await file.arrayBuffer()) }))), c.slides.length);
+  await saveFinals(c, slides);
+  logEvent(a.id, user.id, 'carousel_slides', `${slides.length} slides`);
+  redirect(res, `/carousels/${c.id}`);
+}
+
+// Opens the deck in Glass Slides: a link that works for 30 minutes, fetched back from /glass/t/<token>.
+function openDeck({ res, user, params: [id] }) {
+  if (!GLASS) fail(404, 'Glass Slides is not set up here. Download the deck file instead.');
+  const { c } = findCarousel(user, id);
+  const url = new URL(GLASS);
+  url.search = new URLSearchParams({ t: newLink(c), s: `${BASE.origin}/glass` });
+  redirect(res, url.href);
+}
+
+async function downloadDeck({ res, user, params: [id] }) {
+  const { c, a } = findCarousel(user, id);
+  if (c.status !== 'ready') fail(409, 'The deck can be downloaded once the carousel is ready.');
+  const body = await deckJson(c);
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-disposition': `attachment; filename="${slugify(a.title, a.id)}-carousel.json"`,
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+  });
+  res.end(body);
+}
+
+// Gemini's pictures are not public: only people who can see the article see them.
+async function carouselPicture({ res, user, params: [id, name] }) {
+  const { c } = findCarousel(user, id);
+  if (!c.slides.some((s) => s.picture === name)) fail(404, 'Picture not found.');
+  const bytes = await readFile(join(UPLOADS, name)).catch(() => fail(404, 'Picture not found.'));
+  res.writeHead(200, { 'content-type': imageType(bytes) ?? 'application/octet-stream', 'content-length': bytes.length, 'cache-control': 'private, max-age=3600' });
+  res.end(bytes);
+}
+
+// Public: Glass Slides fetches the deck with a link token and no cookies. Only its origin may read the answer.
+async function glassDeck({ res, params: [token] }) {
+  const headers = { 'cache-control': 'no-store', ...(GLASS ? { 'access-control-allow-origin': GLASS.origin, vary: 'origin' } : {}) };
+  const c = GLASS ? carouselByLink(token) : null;
+  if (!c) {
+    res.writeHead(404, { ...headers, 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('This link has expired. Open the deck from Tvarvi again.');
+  }
+  const body = await deckJson(c);
+  res.writeHead(200, { ...headers, 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
+  res.end(body);
 }
 
 // Public on purpose: Instagram downloads the image from here. Names are random UUIDs.
@@ -582,6 +720,7 @@ const routes = [
   ['POST', /^\/login$/, login, true],
   ['GET', /^\/style\.css$/, stylesheet, true],
   ['GET', /^\/media\/([0-9a-f-]{36}\.jpg)$/, media, true],
+  ['GET', /^\/glass\/t\/([A-Za-z0-9_-]{43})$/, glassDeck, true],
   ['POST', /^\/logout$/, logout],
   ['GET', /^\/$/, dashboard],
   ['POST', /^\/articles$/, createArticle],
@@ -592,6 +731,13 @@ const routes = [
   ['POST', /^\/articles\/(\d{1,12})$/, articleAction],
   ['POST', /^\/items\/(\d{1,12})$/, itemAction],
   ['POST', /^\/items\/(\d{1,12})\/image$/, uploadImage],
+  ['POST', /^\/items\/(\d{1,12})\/carousel$/, createCarousel],
+  ['GET', /^\/carousels\/(\d{1,12})$/, carouselPage],
+  ['POST', /^\/carousels\/(\d{1,12})$/, carouselAction],
+  ['POST', /^\/carousels\/(\d{1,12})\/slides$/, uploadSlides],
+  ['POST', /^\/carousels\/(\d{1,12})\/link$/, openDeck],
+  ['GET', /^\/carousels\/(\d{1,12})\/deck\.json$/, downloadDeck],
+  ['GET', /^\/carousels\/(\d{1,12})\/pictures\/(pic-[0-9a-f-]{36}\.(?:png|jpg|webp))$/, carouselPicture],
   ['GET', /^\/users$/, usersPage],
   ['POST', /^\/users$/, createUser],
   ['POST', /^\/users\/(\d{1,12})$/, updateUser],
@@ -640,7 +786,7 @@ function startJobs() {
 
 export async function handler(req, res) {
   res.setHeader('content-security-policy',
-    "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    `default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'${GLASS ? ` ${GLASS.origin}` : ''}; frame-ancestors 'none'; base-uri 'none'`);
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'same-origin');
   let user = null;
