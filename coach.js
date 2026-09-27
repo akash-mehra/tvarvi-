@@ -1,7 +1,7 @@
 // Weekly "coach": reads what happened, records observations with verified evidence and proposes
 // improvements as *pending* suggestions. It has no tools and cannot change rules, examples or posts;
 // only an admin's Accept or Edit creates a new knowledge version.
-import { callClaude, describe, parseJson } from './ai.js';
+import { callClaude, describe, MODEL, parseJson } from './ai.js';
 import { all, audit, one, run, tx } from './db.js';
 import { createEntry, knownKnowledgeNorms, latestMetrics } from './knowledge.js';
 import { CHANNELS, clip, isNearDuplicate, normText } from './text.js';
@@ -223,6 +223,7 @@ export async function runDigest(userId = null) {
     } else {
       const { prompt, corpus } = buildPrompt(data);
       const res = await callClaude('coach', null, {
+        model: MODEL.coach,
         system: COACH,
         messages: [{ role: 'user', content: prompt }],
         output_config: { format: { type: 'json_schema', schema: COACH_SCHEMA } },

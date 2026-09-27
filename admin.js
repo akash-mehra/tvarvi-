@@ -1,4 +1,5 @@
 // Admin pages: agent training (versioned rules and examples), web sources, weekly suggestions.
+import { callCost, MODEL } from './ai.js';
 import { articlesForItems, CoachError, decideSuggestion, isDigestRunning, listDigests, listSuggestions, observationsForDigest, runDigest } from './coach.js';
 import { all, one } from './db.js';
 import { count, fail, field, oneOf, readForm, redirect, send, toId } from './http.js';
@@ -13,22 +14,17 @@ import * as view from './views.js';
 
 const requireAdmin = (user) => user.is_admin || fail(403, 'Only admins can do this.');
 
-// Claude Opus 5 list prices in USD per million tokens, and per web search.
-const PRICE = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, search: 0.01 };
-const cost = (r) =>
-  (r.input * PRICE.input + r.output * PRICE.output + r.cache_read * PRICE.cacheRead + r.cache_write * PRICE.cacheWrite) / 1e6 +
-  r.searches * PRICE.search;
-
+// One row per agent type and model, each priced at that model's list price.
 function usageSummary() {
   const rows = all(
     `SELECT CASE WHEN agent LIKE '% writer' THEN 'Writer' WHEN agent LIKE '% compliance' THEN 'Compliance'
-                 WHEN agent LIKE '% trend scout' THEN 'Trend scout' ELSE 'Coach' END AS name,
+                 WHEN agent LIKE '% trend scout' THEN 'Trend scout' ELSE 'Coach' END AS name, model,
        COUNT(*) AS calls, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cache_read,
        SUM(cache_write) AS cache_write, SUM(web_searches) AS searches, SUM(web_fetches) AS fetches, ROUND(AVG(ms)) AS ms
-     FROM ai_calls WHERE at >= datetime('now', '-7 days') GROUP BY name ORDER BY name`,
-  ).map((row) => ({ ...row, cost: cost(row) }));
+     FROM ai_calls WHERE at >= datetime('now', '-7 days') GROUP BY name, model ORDER BY name, model`,
+  ).map((row) => ({ ...row, cost: callCost(row) }));
   const articles = one(`SELECT COUNT(DISTINCT article_id) AS n FROM ai_calls WHERE article_id IS NOT NULL AND at >= datetime('now', '-7 days')`).n;
-  const articleCost = rows.filter((r) => r.name !== 'Coach').reduce((sum, r) => sum + r.cost, 0);
+  const articleCost = rows.filter((r) => r.name !== 'Coach').reduce((sum, r) => sum + (r.cost ?? 0), 0);
   // Wall-clock time from "approved" until the third (last) post finished, per article.
   const { seconds } = one(
     `SELECT AVG((julianday(done) - julianday(approved)) * 86400) AS seconds FROM (
@@ -39,7 +35,10 @@ function usageSummary() {
              WHERE action = 'approved' AND at >= datetime('now', '-7 days') GROUP BY article_id) a
      ) WHERE done IS NOT NULL`,
   );
-  return { rows, articles, perArticle: articles ? articleCost / articles : null, seconds };
+  return {
+    rows, articles, perArticle: articles ? articleCost / articles : null, seconds,
+    unpriced: rows.some((r) => r.cost == null), models: MODEL,
+  };
 }
 
 // ---------- agent training ----------

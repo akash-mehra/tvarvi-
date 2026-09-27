@@ -27,7 +27,9 @@ let nextId = 0;
 const complianceSystems = [];
 const reply = (content, stopReason) => ({ content, stop_reason: stopReason, usage: { input_tokens: 1000, output_tokens: 200 } });
 const toolUse = (name, input) => ({ type: 'tool_use', id: `toolu_${++nextId}`, name, input });
+const requested = { writer: new Set(), compliance: new Set() };
 ai.ask = async (params) => {
+  requested[params.output_config ? 'compliance' : 'writer'].add(params.model);
   if (params.output_config) {
     complianceSystems.push(params.system.map((block) => block.text).join('\n'));
     const approved = params.messages[0].content.includes('not medical advice');
@@ -148,6 +150,20 @@ test('article goes from writer to published, following the diagram', async (t) =
     const inputs = all('SELECT kind, ref_id FROM item_inputs WHERE item_id = ? ORDER BY kind', posts[0].id).map((i) => `${i.kind}:${i.ref_id}`);
     assert.deepEqual(inputs.sort(), [`example:${example.versionId}`, `rule:${rule.versionId}`, 'snapshot:1'].sort());
     assert.ok(complianceSystems.every((s) => s.includes('APPROVED GUIDANCE TEXT') && !s.includes('PENDING GUIDANCE TEXT')));
+
+    // Writers run on Sonnet 5 and the compliance agent on Opus 5 by default, and each call records its model.
+    assert.deepEqual([[...requested.writer], [...requested.compliance]], [['claude-sonnet-5'], ['claude-opus-5']]);
+    assert.deepEqual(all(`SELECT agent LIKE '% writer' AS writer, model, COUNT(*) AS n FROM ai_calls GROUP BY 1, 2 ORDER BY 1`).map((r) => ({ ...r })),
+      [{ writer: 0, model: 'claude-opus-5', n: 6 }, { writer: 1, model: 'claude-sonnet-5', n: 9 }]);
+  });
+
+  await t.test('the Training page prices each call at its own model', async () => {
+    const page = await (await request(admin, '/training')).text();
+    assert.match(page, /<td>Compliance<\/td><td>claude-opus-5<\/td><td>6<\/td>/);
+    assert.match(page, /<td>Writer<\/td><td>claude-sonnet-5<\/td><td>9<\/td>/);
+    // 9 Sonnet calls at $0.004 + 6 Opus calls at $0.01 (1,000 input and 200 output tokens each); all-Opus would be $0.15.
+    assert.match(page, /Average cost per article: \$0\.10 over 1 article/);
+    assert.match(page, /Models now: writers claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5, coach claude-opus-5/);
   });
 
   const item = (channel) => one('SELECT * FROM items WHERE channel = ?', channel);
