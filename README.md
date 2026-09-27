@@ -117,7 +117,7 @@ The social posts for the article cost extra after approval (see the cost estimat
 
 ## Instagram carousels
 
-After an article is approved, its assigned reviewer can click **Make a carousel instead** on the Instagram post. The carousel replaces the single image; the post's text stays the caption.
+Carousels are **off by default**: approving an article makes no carousel and spends nothing on one. The assigned reviewer turns the **Carousel** toggle on for an Instagram post only when they want one. The carousel then replaces the single image, and the post's text stays the caption. Turning the toggle off removes the carousel and its slides, and the post goes back to a single image.
 
 1. **Slide text.** The carousel writer (`MODEL_CAROUSEL_WRITER`) turns the approved article into 5–10 slides: a cover, one point per slide, and a last slide with "General information, not medical advice" and "Full article: link in bio". Each slide has a heading (at most 60 characters), text (at most 180) and a brief for its picture.
    - Code checks the count, the lengths, and that there are no links or hashtags and the last slide has the disclaimer; the writer fixes what fails.

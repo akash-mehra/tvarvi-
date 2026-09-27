@@ -498,14 +498,26 @@ function expectCarouselEditor(user, a, item) {
   if (!EDITABLE.includes(item.status)) fail(409, 'This post cannot be changed right now.');
 }
 
-function createCarousel({ res, user, params: [id] }) {
+// The Instagram post's Carousel toggle, off by default: a carousel is only made when the reviewer turns it on.
+// Turning it off removes the carousel, and the post goes back to a single image.
+async function toggleCarousel({ req, res, user, params: [id] }) {
   const item = one('SELECT * FROM items WHERE id = ?', Number(id)) ?? fail(404, 'Post not found.');
   const a = getArticle(item.article_id);
   if (item.channel !== 'instagram') fail(400, 'Only Instagram posts can be carousels.');
   expectCarouselEditor(user, a, item);
-  const carouselId = startCarousel(item.id, user.id);
-  logEvent(a.id, user.id, 'carousel', 'Instagram');
-  redirect(res, `/carousels/${carouselId}`);
+  const on = oneOf(await readForm(req), 'carousel', 'carousel setting', ['on', 'off']) === 'on';
+  const current = carouselFor(item.id);
+  if (on) {
+    if (current) return redirect(res, `/carousels/${current.id}`); // already on: nothing new is made
+    const carouselId = startCarousel(item.id, user.id);
+    logEvent(a.id, user.id, 'carousel');
+    return redirect(res, `/carousels/${carouselId}`);
+  }
+  if (current) {
+    discardCarousel(current);
+    logEvent(a.id, user.id, 'carousel_removed');
+  }
+  redirect(res, `/articles/${a.id}`);
 }
 
 function carouselPage({ res, user, params: [id] }) {
@@ -538,10 +550,10 @@ async function carouselAction({ req, res, user, params: [id] }) {
     retryCarousel(c);
   } else if (action === 'restart') {
     startCarousel(item.id, user.id);
-    logEvent(a.id, user.id, 'carousel', 'started over');
+    logEvent(a.id, user.id, 'carousel_restart');
   } else if (action === 'discard') {
     discardCarousel(c);
-    logEvent(a.id, user.id, 'carousel_removed', 'Instagram');
+    logEvent(a.id, user.id, 'carousel_removed');
     return redirect(res, `/articles/${a.id}`);
   } else {
     fail(400, 'Unknown action.');
@@ -731,7 +743,7 @@ const routes = [
   ['POST', /^\/articles\/(\d{1,12})$/, articleAction],
   ['POST', /^\/items\/(\d{1,12})$/, itemAction],
   ['POST', /^\/items\/(\d{1,12})\/image$/, uploadImage],
-  ['POST', /^\/items\/(\d{1,12})\/carousel$/, createCarousel],
+  ['POST', /^\/items\/(\d{1,12})\/carousel$/, toggleCarousel],
   ['GET', /^\/carousels\/(\d{1,12})$/, carouselPage],
   ['POST', /^\/carousels\/(\d{1,12})$/, carouselAction],
   ['POST', /^\/carousels\/(\d{1,12})\/slides$/, uploadSlides],

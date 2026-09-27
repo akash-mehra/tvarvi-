@@ -105,16 +105,30 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
   const item = (channel) => one('SELECT * FROM items WHERE channel = ?', channel);
   const ig = item('instagram').id;
 
-  await t.test('only the assigned reviewer can make one, and only for Instagram', async () => {
-    assert.match(await page(reviewer, '/articles/1'), new RegExp(`<form method="post" action="/items/${ig}/carousel" class="inline">`));
-    assert.equal((await post(writer, `/items/${ig}/carousel`, {})).status, 403);
-    assert.equal((await post(reviewer, `/items/${item('linkedin').id}/carousel`, {})).status, 400);
-    assert.equal((await post(reviewer, `/items/${ig}/carousel`, {}, {})).status, 403, 'cross-site');
-    const res = await post(reviewer, `/items/${ig}/carousel`, {});
+  await t.test('carousels are off by default; only the assigned reviewer turns one on, and only for Instagram', async () => {
+    assert.equal(one('SELECT COUNT(*) AS n FROM carousels').n, 0, 'approving the article makes no carousel');
+    assert.ok(!seen.includes('carousel writer') && !briefs.length, 'and spends nothing on one');
+    assert.match(await page(reviewer, '/articles/1'),
+      new RegExp(`<form method="post" action="/items/${ig}/carousel" class="toggle">\\s*<button class="switch" name="carousel" value="on" aria-pressed="false">`));
+    assert.doesNotMatch(await page(writer, '/articles/1'), /class="switch"/, 'only the reviewer sees the toggle');
+    assert.equal((await post(writer, `/items/${ig}/carousel`, { carousel: 'on' })).status, 403);
+    assert.equal((await post(reviewer, `/items/${item('linkedin').id}/carousel`, { carousel: 'on' })).status, 400);
+    assert.equal((await post(reviewer, `/items/${ig}/carousel`, { carousel: 'on' }, {})).status, 403, 'cross-site');
+    assert.equal((await post(reviewer, `/items/${ig}/carousel`, {})).status, 400, 'the toggle says on or off');
+    assert.equal(one('SELECT COUNT(*) AS n FROM carousels').n, 0);
+
+    const res = await post(reviewer, `/items/${ig}/carousel`, { carousel: 'on' });
     assert.equal(res.headers.get('location'), '/carousels/1');
     await settled();
     assert.equal(carousel().status, 'ready', carousel().error);
     assert.equal(briefs.length, 5);
+    assert.match(await page(reviewer, '/articles/1'), /<button class="switch" name="carousel" value="off" aria-pressed="true">/);
+    assert.match(await page(reviewer, '/articles/1'), /Rae Reviewer turned on the Instagram carousel/);
+
+    // Turning it on again makes nothing new.
+    const writerCalls = seen.filter((a) => a === 'carousel writer').length;
+    assert.equal((await post(reviewer, `/items/${ig}/carousel`, { carousel: 'on' })).headers.get('location'), '/carousels/1');
+    assert.equal(seen.filter((a) => a === 'carousel writer').length, writerCalls);
   });
 
   await t.test('the carousel page shows the slides, their pictures and the ways into Glass Slides', async () => {
@@ -263,7 +277,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
   });
 });
 
-test('a carousel can be removed, going back to a single image, and made again', async () => {
+test('turning the carousel off removes it and goes back to a single image; turning it on makes it again', async () => {
   const reviewer = await login('reviewer@example.com');
   const admin = await login('admin@example.com');
   const writer = await login('writer@example.com');
@@ -273,19 +287,32 @@ test('a carousel can be removed, going back to a single image, and made again', 
   assert.equal((await post(reviewer, '/articles/2', { action: 'approve', title: 'Sleep and iron', body: 'Sleep matters.' })).status, 303);
   await until(() => !one(`SELECT 1 FROM items WHERE status = 'generating'`));
   const ig = one(`SELECT id FROM items WHERE article_id = 2 AND channel = 'instagram'`).id;
-  const id = Number((await post(reviewer, `/items/${ig}/carousel`, {})).headers.get('location').split('/').pop());
-  await until(() => one('SELECT status FROM carousels WHERE id = ?', id).status !== 'working');
+  const toggle = (value) => post(reviewer, `/items/${ig}/carousel`, { carousel: value });
+  const status = (id) => one('SELECT status FROM carousels WHERE id = ?', id).status;
+  const id = Number((await toggle('on')).headers.get('location').split('/').pop());
+  await until(() => status(id) !== 'working');
   const pictures = JSON.parse(one('SELECT slides FROM carousels WHERE id = ?', id).slides).map((s) => s.picture);
 
-  assert.equal((await post(reviewer, `/carousels/${id}`, { action: 'discard' })).headers.get('location'), '/articles/2');
-  assert.equal(one('SELECT status FROM carousels WHERE id = ?', id).status, 'discarded');
+  // Not while it is being made: the job would keep spending on a carousel nobody sees.
+  run(`UPDATE carousels SET status = 'working' WHERE id = ?`, id);
+  assert.match(await page(reviewer, '/articles/2'), /aria-pressed="true" disabled>/);
+  assert.equal((await toggle('off')).status, 409);
+  run(`UPDATE carousels SET status = 'ready' WHERE id = ?`, id);
+
+  assert.equal((await toggle('off')).headers.get('location'), '/articles/2');
+  assert.equal(status(id), 'discarded');
   const html = await page(reviewer, '/articles/2');
   assert.match(html, /Upload JPEG/);
-  assert.match(html, /Make a carousel instead/);
+  assert.match(html, /<button class="switch" name="carousel" value="on" aria-pressed="false">/);
   assert.equal((await request(reviewer, `/carousels/${id}/pictures/${pictures[0]}`)).status, 404, 'its pictures are gone');
+  assert.equal((await toggle('off')).headers.get('location'), '/articles/2', 'turning it off again changes nothing');
 
-  assert.equal((await post(reviewer, `/items/${ig}/carousel`, {})).headers.get('location'), `/carousels/${id}`, 'made again in the same place');
-  await until(() => one('SELECT status FROM carousels WHERE id = ?', id).status !== 'working');
-  assert.equal(one('SELECT status FROM carousels WHERE id = ?', id).status, 'ready');
-  assert.deepEqual(all(`SELECT detail FROM events WHERE article_id = 2 AND action LIKE 'carousel%' ORDER BY id`).map((e) => e.detail), ['Instagram', 'Instagram', 'Instagram']);
+  assert.equal((await toggle('on')).headers.get('location'), `/carousels/${id}`, 'made again in the same place');
+  await until(() => status(id) !== 'working');
+  assert.equal(status(id), 'ready');
+  assert.equal((await post(reviewer, `/carousels/${id}`, { action: 'discard' })).headers.get('location'), '/articles/2', 'the carousel page can turn it off too');
+  assert.equal(status(id), 'discarded');
+  assert.deepEqual(all(`SELECT action FROM events WHERE article_id = 2 AND action LIKE 'carousel%' ORDER BY id`).map((e) => e.action),
+    ['carousel', 'carousel_removed', 'carousel', 'carousel_removed']);
+  assert.match(await page(reviewer, '/articles/2'), /Rae Reviewer turned off the Instagram carousel/);
 });

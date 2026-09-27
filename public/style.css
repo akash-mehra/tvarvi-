@@ -66,6 +66,7 @@ input, select, textarea {
   border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%;
 }
 input[type="checkbox"], input[type="radio"], input[type="file"] { width: auto; }
+input[type="file"] { max-width: 100%; }
 textarea { resize: vertical; }
 
 button {
@@ -88,7 +89,7 @@ th { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
 }
 .panel > :first-child { margin-top: 0; }
 .items { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-.card { margin: 0; display: grid; gap: 10px; align-content: start; }
+.card { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
 .card header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .member { display: grid; gap: 10px; grid-template-columns: minmax(180px, 1fr) 2fr auto; align-items: center; }
 .member.inactive { opacity: 0.6; }
@@ -167,3 +168,16 @@ a.button {
   background: var(--accent); color: var(--accent-text); border: 1px solid var(--accent); border-radius: 6px; padding: 8px 14px;
 }
 a.button.secondary { background: transparent; color: var(--accent); }
+
+/* The carousel toggle: a real button (aria-pressed), styled as a switch; the form round trip sets it, no script needed. */
+.toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+button.switch { display: inline-flex; align-items: center; gap: 10px; background: transparent; color: var(--text); border-color: var(--line); padding: 6px 12px 6px 8px; }
+.switch .track { position: relative; width: 40px; height: 22px; border-radius: 999px; background: var(--line); transition: background 0.15s; }
+.switch .track::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.35); transition: left 0.15s;
+}
+.switch[aria-pressed="true"] .track { background: var(--accent); }
+.switch[aria-pressed="true"] .track::after { left: 21px; }
+button.switch:disabled { opacity: 0.6; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) { .switch .track, .switch .track::after { transition: none; } }
