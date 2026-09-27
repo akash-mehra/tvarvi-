@@ -97,7 +97,7 @@ test('research, code checks, compliance feedback, then a draft with references b
 
   // The compliance agent got the cited passages, the uncited sentences, the approved regulator text and the rules.
   assert.equal(reviewCalls.length, 2);
-  assert.equal(reviewCalls[0].model, 'claude-opus-5');
+  assert.equal(reviewCalls[0].model, 'claude-opus-5-5');
   const input = reviewCalls[0].messages[0].content;
   assert.match(input, /<claim id="2" sources="2">Leafy greens, beans and nuts provide iron\.<\/claim>\n<passage claim="2" source="2">Good sources of iron include/);
   assert.match(input, /<uncited>\n- Many people feel tired when their iron is low\./);

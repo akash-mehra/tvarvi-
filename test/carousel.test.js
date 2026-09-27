@@ -85,9 +85,9 @@ test('slide text is checked in code and by the compliance agent; each picture is
   assert.ok(requests.writer[0].output_config.format.schema.properties.slides);
   assert.match(requests.writer[1].last, /Write 5 to 10 slides \(there are 4\)/);
   assert.match(requests.writer[2].last, /Slide 3 overstates the article/);
-  // The compliance agent: Opus 5, with the approved regulator snapshot and every slide.
+  // The compliance agent: Opus 5.5, with the approved regulator snapshot and every slide.
   assert.equal(requests.compliance.length, 2);
-  assert.equal(requests.compliance[0].model, 'claude-opus-5');
+  assert.equal(requests.compliance[0].model, 'claude-opus-5-5');
   assert.match(requests.compliance[0].system.map((b) => b.text).join('\n'), /APPROVED GUIDANCE TEXT/);
   assert.match(requests.compliance[0].messages[0].content, /<slide number="6">/);
   assert.deepEqual([c.compliance_ok, c.notes], [1, 'Passed the code checks and the AI medical-compliance review (round 2).']);
@@ -101,7 +101,7 @@ test('slide text is checked in code and by the compliance agent; each picture is
   for (const s of c.slides) assert.deepEqual(readFileSync(join(UPLOADS, s.picture)), PNG);
   assert.deepEqual(calls(id), { 'Carousel compliance': 2, 'Carousel picture check': 9, 'Carousel pictures': 9, 'Carousel writer': 3 });
   assert.match(c.log, /Checks: 1 problem to fix[\s\S]*Compliance review 1: 1 issue[\s\S]*Slide 2, picture 1 flagged: Text in the picture[\s\S]*Done: ready/);
-  // 3 writer calls ($0.004 each), 2 reviews ($0.01), 9 checks ($0.004) and 9 Flash Image pictures ($0.0673).
+  // 3 writer calls ($0.004 each), 2 reviews ($0.008), 9 checks ($0.004) and 9 Flash Image pictures ($0.0673).
   assert.equal(c.cost.toFixed(2), '0.67');
 
   // The final text check reads every finished slide next to its approved text; it advises, the reviewer decides.

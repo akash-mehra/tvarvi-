@@ -48,10 +48,11 @@ const EVENT = {
   promoted: 'promoted a post to an example',
   metrics: 'recorded engagement',
   ai_drafted: 'drafted it with the article agent',
-  carousel: 'asked the AI for an Instagram carousel',
+  carousel: 'turned on the Instagram carousel',
+  carousel_restart: 'started the carousel over',
   carousel_slides: 'uploaded the finished carousel slides',
   carousel_checked: 'ticked the carousel image checklist',
-  carousel_removed: 'removed the carousel',
+  carousel_removed: 'turned off the Instagram carousel',
 };
 const CAROUSEL_STATUS = {
   working: ['Working…', 'generating'],
@@ -263,18 +264,27 @@ const carouselPill = (status) => pill(...(CAROUSEL_STATUS[status] ?? [status, ''
 function singleImage(item, editable) {
   return html`${item.image
     ? html`<img class="preview" src="/media/${item.image}" alt="Image for the Instagram post">`
-    : html`<p class="warn">Instagram posts need an image, or a carousel, before they can be marked ready.</p>`}
+    : html`<p class="warn">Instagram posts need an image before they can be marked ready.</p>`}
   ${editable
     ? html`<form method="post" action="/items/${item.id}/image" enctype="multipart/form-data" class="inline">
     <input type="file" name="image" accept="image/jpeg" required>
     <button class="secondary">Upload JPEG</button>
     <span class="muted">Up to 8 MB. Aspect ratio between 4:5 and 1.91:1.</span>
-  </form>
-  <form method="post" action="/items/${item.id}/carousel" class="inline">
-    <button class="secondary">Make a carousel instead</button>
-    <span class="muted">The AI writes 5–10 slides from the article, Gemini makes the pictures, and you design them in Glass Slides.</span>
   </form>`
     : ''}`;
+}
+
+// Off by default: a carousel is only made when the reviewer turns this on, and turning it off removes it.
+function carouselToggle(item, c) {
+  const busy = c?.status === 'working';
+  return html`<form method="post" action="/items/${item.id}/carousel" class="toggle">
+    <button class="switch" name="carousel" value="${c ? 'off' : 'on'}" aria-pressed="${c ? 'true' : 'false'}"${busy ? raw(' disabled') : ''}><span class="track"></span>Carousel</button>
+    <span class="muted">${busy
+      ? 'The carousel is being made. You can turn it off once it finishes.'
+      : c
+        ? 'On: this post is a carousel. Turning it off removes the carousel and its slides.'
+        : 'Off: this post is a single image. Turn it on to have the AI write 5–10 slides from the article and Gemini make the pictures (about $0.90).'}</span>
+  </form>`;
 }
 
 // The Instagram post as a carousel: its status, the finished slides and what the final text check found.
@@ -309,7 +319,9 @@ function itemCard(item, perm, user) {
   ${item.error ? html`<p class="error">${item.error}</p>` : ''}
   ${item.ai_notes ? html`<p class="${item.ai_ok ? 'ok' : 'warn'} pre">${item.ai_notes}</p>` : ''}
   ${item.channel === 'website' ? html`<p class="muted">The approved article shown above.</p>` : ''}
-  ${item.channel === 'instagram' ? (carousel ? carouselSummary(carousel) : singleImage(item, editable)) : ''}
+  ${item.channel === 'instagram'
+    ? html`${editable ? carouselToggle(item, carousel) : ''}${carousel ? carouselSummary(carousel) : singleImage(item, editable)}`
+    : ''}
   ${editable
     ? html`<form method="post" action="/items/${item.id}" class="stack">
     <textarea name="body" rows="9" maxlength="10000" aria-label="${label} post text">${item.body}</textarea>
@@ -652,10 +664,10 @@ ${ready && c.final_check.length
 <h2>4. Tick the checklist and mark the post ready</h2>
 <p>On <a href="/articles/${a.id}">the article page</a>, the Instagram post shows the finished slides and the image checklist. Tick every box, then click Mark ready. Nothing is published until someone clicks Publish.</p>
 ${editable && !working
-    ? html`<details><summary>Start over, or go back to a single image</summary>
+    ? html`<details><summary>Start over, or turn the carousel off</summary>
 <form method="post" action="/carousels/${c.id}" class="actions">
   <button name="action" value="restart" class="secondary">Start over with new slides</button>
-  <button name="action" value="discard" class="secondary">Remove the carousel</button>
+  <button name="action" value="discard" class="secondary">Turn the carousel off (back to a single image)</button>
 </form></details>`
     : ''}
 <details${working ? raw(' open') : ''}><summary>Progress log</summary><p class="pre log">${c.log}</p></details>`, { refresh: working ? 10 : null });

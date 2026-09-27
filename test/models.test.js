@@ -8,16 +8,17 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tvarvi-models-'));
 const { agentModels, ai, callClaude, callCost, requestParams } = await import('../ai.js');
 const { one } = await import('../db.js');
 
-test('writers, trend scouts and the picture check default to Sonnet 5; compliance and coach to Opus 5; pictures to Gemini Flash Image', () => {
+test('writers, trend scouts and the picture check default to Sonnet 5; compliance and coach to Opus 5.5; pictures to Gemini Flash Image', () => {
   assert.deepEqual(agentModels({}), {
-    writer: 'claude-sonnet-5', article: 'claude-sonnet-5', carousel: 'claude-sonnet-5', scout: 'claude-sonnet-5', compliance: 'claude-opus-5',
-    imageCheck: 'claude-sonnet-5', coach: 'claude-opus-5', picture: 'gemini-3.1-flash-image',
+    writer: 'claude-sonnet-5', article: 'claude-sonnet-5', carousel: 'claude-sonnet-5', scout: 'claude-sonnet-5', compliance: 'claude-opus-5-5',
+    imageCheck: 'claude-sonnet-5', coach: 'claude-opus-5-5', picture: 'gemini-3.1-flash-image',
   });
   assert.equal(agentModels({ MODEL_CAROUSEL_WRITER: 'claude-opus-5', MODEL_IMAGE_CHECK: 'claude-opus-5' }).imageCheck, 'claude-opus-5');
   assert.equal(agentModels({ GEMINI_IMAGE_MODEL: 'gemini-3-pro-image' }).picture, 'gemini-3-pro-image');
   assert.equal(agentModels({ MODEL_ARTICLE_WRITER: 'claude-opus-5' }).article, 'claude-opus-5');
   assert.equal(agentModels({ MODEL_WRITER: ' claude-opus-5 ', MODEL_COACH: '' }).writer, 'claude-opus-5');
-  assert.equal(agentModels({ MODEL_COACH: '' }).coach, 'claude-opus-5');
+  assert.equal(agentModels({ MODEL_COACH: '' }).coach, 'claude-opus-5-5');
+  assert.equal(agentModels({ MODEL_COMPLIANCE: 'claude-opus-5' }).compliance, 'claude-opus-5', 'Opus 5 can still be chosen');
 });
 
 test('an unsupported model is refused with the list of supported ones', () => {
@@ -37,7 +38,8 @@ test('server-side refusal fallback is only requested for models that support it'
 
 test('cost uses each model\'s own list prices', () => {
   const usage = { input: 1e6, output: 1e6, cache_read: 1e6, cache_write: 1e6, searches: 100 };
-  assert.equal(callCost({ ...usage, model: 'claude-opus-5' }), 5 + 25 + 0.5 + 6.25 + 1);
+  assert.equal(callCost({ ...usage, model: 'claude-opus-5-5' }), 4 + 20 + 0.2 + 5 + 1);
+  assert.equal(callCost({ ...usage, model: 'claude-opus-5' }), 5 + 25 + 0.5 + 6.25 + 1, 'past Opus 5 calls keep their price');
   assert.equal(callCost({ ...usage, model: 'claude-sonnet-5' }), 2 + 10 + 0.2 + 2.5 + 1);
   assert.equal(callCost({ ...usage, model: 'claude-unknown' }), null);
   // A 1K Gemini picture is 1,120 output tokens: $0.067 on Flash Image, $0.134 on Pro Image.

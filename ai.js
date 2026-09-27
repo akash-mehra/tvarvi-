@@ -38,9 +38,9 @@ export function agentModels(env = process.env) {
     article: pick('MODEL_ARTICLE_WRITER', 'claude-sonnet-5'),
     carousel: pick('MODEL_CAROUSEL_WRITER', 'claude-sonnet-5'),
     scout: pick('MODEL_TREND_SCOUT', 'claude-sonnet-5'),
-    compliance: pick('MODEL_COMPLIANCE', 'claude-opus-5'),
+    compliance: pick('MODEL_COMPLIANCE', 'claude-opus-5-5'),
     imageCheck: pick('MODEL_IMAGE_CHECK', 'claude-sonnet-5'),
-    coach: pick('MODEL_COACH', 'claude-opus-5'),
+    coach: pick('MODEL_COACH', 'claude-opus-5-5'),
     picture: pick('GEMINI_IMAGE_MODEL', 'gemini-3.1-flash-image', IMAGE_MODELS),
   };
 }
