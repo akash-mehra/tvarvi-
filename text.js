@@ -33,9 +33,20 @@ export function limitProblems(channel, text) {
   return problems;
 }
 
-// Article text → safe HTML: blank-line paragraphs, "# " / "## " / "### " headings, "- " bullet lists.
+// Escaped text → the same text with its https:// URLs as links. It runs after esc(), so a URL can't break out of
+// the attribute: it stops at whitespace and at escaped quotes or angle brackets; trailing punctuation stays outside.
+const linkify = (escaped) =>
+  escaped.replace(/https:\/\/(?:[^\s&]|&amp;)+/g, (url) => {
+    const trail = url.match(/[.,;:!?)]+$/)?.[0] ?? '';
+    const href = url.slice(0, url.length - trail.length);
+    return `<a href="${href}">${href}</a>${trail}`;
+  });
+
+// Article text → safe HTML: blank-line paragraphs, "# " / "## " / "### " headings, "- " bullet lists,
+// "1. " numbered lists (references keep their numbers), and https:// links.
 export function textToHtml(text) {
   return text
+    .replace(/^[ \t]*(#{1,3}[ \t]+\S.*)$/gm, '\n$1\n') // a heading is its own block, even with text right below it
     .split(/\n\s*\n/)
     .map((block) => block.trim())
     .filter(Boolean)
@@ -47,9 +58,15 @@ export function textToHtml(text) {
         return `<h${level}>${esc(heading[2])}</h${level}>`;
       }
       if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-        return `<ul>${lines.map((line) => `<li>${esc(line.replace(/^\s*[-*]\s+/, ''))}</li>`).join('')}</ul>`;
+        return `<ul>${lines.map((line) => `<li>${linkify(esc(line.replace(/^\s*[-*]\s+/, '')))}</li>`).join('')}</ul>`;
       }
-      return `<p>${lines.map(esc).join('<br>')}</p>`;
+      if (lines.every((line) => /^\s*\d{1,4}\.\s+/.test(line))) {
+        return `<ol>${lines.map((line) => {
+          const [, n, rest] = line.match(/^\s*(\d{1,4})\.\s+(.*)$/);
+          return `<li value="${Number(n)}">${linkify(esc(rest))}</li>`;
+        }).join('')}</ol>`;
+      }
+      return `<p>${lines.map((line) => linkify(esc(line))).join('<br>')}</p>`;
     })
     .join('\n');
 }

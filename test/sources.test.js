@@ -111,9 +111,26 @@ test('a changed page waits for admin approval before the compliance agent can us
 });
 
 test('trend sources set the allowed domains', () => {
-  assert.throws(() => s.addSource('https://trends.example/health', 'news', 1), /compliance" or "trends/);
+  assert.throws(() => s.addSource('https://trends.example/health', 'news', 1), /compliance, trends or research/);
   s.addSource('https://trends.example/health', 'trends', 1);
   assert.throws(() => s.addSource('https://trends.example/health', 'trends', 1), /already a source/);
   assert.deepEqual(s.trendSources().map((t) => t.host), ['trends.example']);
   assert.ok(s.allowedHosts().has('trends.example') && s.allowedHosts().has('regulator.example'));
+});
+
+test('research sources set the article agent domains, and a host covers its subdomains', () => {
+  s.addSource('https://nih.gov', 'research', 1);
+  const id = s.addSource('https://www.nhs.uk/conditions/', 'research', 1);
+  assert.deepEqual(s.researchSources().map((r) => r.host), ['nih.gov', 'www.nhs.uk']);
+  s.setSourceActive(id, false, 1);
+  assert.deepEqual(s.researchSources().map((r) => r.host), ['nih.gov']);
+  s.setSourceActive(id, true, 1);
+
+  const hosts = ['nih.gov', 'www.nhs.uk'];
+  for (const url of ['https://nih.gov/x', 'https://www.ncbi.nlm.nih.gov/books/1', 'https://www.nhs.uk/conditions/iron']) {
+    assert.equal(s.onApprovedHost(url, hosts), true, url);
+  }
+  for (const url of ['http://nih.gov/x', 'https://evilnih.gov/x', 'https://nih.gov.evil.example/x', 'https://nhs.uk/x', 'not a url']) {
+    assert.equal(s.onApprovedHost(url, hosts), false, url);
+  }
 });

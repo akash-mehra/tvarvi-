@@ -13,6 +13,8 @@ This app runs the company's content workflow from the "human input" diagram:
 
 Every step is recorded in each article's history.
 
+A writer can also have the **article agent** research and draft an article from a topic (see [Article agent](#article-agent)). The draft opens in the new-article form, and a person checks and submits it into this same workflow.
+
 ## How the agents learn (without fine-tuning)
 
 The agents get company knowledge and approved web sources on every run, and a weekly coach proposes improvements. **Nothing changes how the agents behave until an admin approves it.**
@@ -31,6 +33,7 @@ Each agent's model is set with an environment variable:
 | Variable | Agent | Default |
 |---|---|---|
 | `MODEL_WRITER` | Social post writers | `claude-sonnet-5` |
+| `MODEL_ARTICLE_WRITER` | Article agent (research and writing) | `claude-sonnet-5` |
 | `MODEL_TREND_SCOUT` | Trend scouts | `claude-sonnet-5` |
 | `MODEL_COMPLIANCE` | Compliance agent | `claude-opus-5` |
 | `MODEL_COACH` | Weekly coach | `claude-opus-5` |
@@ -54,13 +57,14 @@ Each agent's model is set with an environment variable:
 
 ### Sources (admin → Sources)
 
-- Only **https** links. Each one is tagged **Compliance** or **Trends**, and the domains you add form the allowlist.
+- Only **https** links. Each one is tagged **Compliance**, **Trends** or **Research**, and the domains you add form the allowlist.
 - **Compliance pages** (regulator guidance, Instagram/LinkedIn/X health-content policies):
   - The server fetches each one right away and then daily, and stores it as a text snapshot.
   - A new or changed page shows its differences and waits for **Approve / Reject**. Until you approve it, the compliance agent keeps using the last approved version.
   - PDF pages aren't supported yet, so add the HTML version.
   - Fetching blocks private and internal addresses, re-checks every redirect against the allowlist, and stops after 2 MB or 15 seconds.
 - **Trends sources** set the only domains the trend scout may search or open. Trending keywords are used only where they fit the article's facts.
+- **Research sites** are the only medical sites the article agent may search, open and cite. A site covers its subdomains: `https://nih.gov` allows every `*.nih.gov` site, while `https://www.nhs.uk` allows only `www.nhs.uk`.
 
 ### Weekly suggestions (admin → Suggestions)
 
@@ -75,6 +79,38 @@ It records **observations**, each with word-for-word evidence quotes and links t
 - **Accept or Edit** creates version 1 of a new rule or example, linked to the suggestion. **Reject** is kept, so the idea isn't proposed again. Every decision records who made it and when.
 - **Limits:** at most 8 new suggestions a week. Anything with evidence that can't be verified, or that repeats an existing rule or an earlier suggestion, is dropped.
 - **Thin weeks:** with fewer than 3 data points the week is skipped with a note, at no AI cost.
+
+## Article agent
+
+On the dashboard, a writer types a topic or keyword under **Draft an article with AI**. The agent then works in the background, and the draft page shows its progress live:
+
+1. **Research.** It searches and opens pages on the **Research sites** only (Claude's web search and web fetch, restricted to those domains). It may use facts only from pages it actually opened.
+2. **Writing.** It writes about 2,800 words in its own words, following the active brand and compliance rules. Every sentence that states a fact, figure, risk, benefit or recommendation carries a citation of the exact passage it comes from.
+3. **References.** The app, not the model, turns the citations into `[n]` markers and a numbered **References** list with links. Only pages the agent opened on an approved site can become references; a citation of a search snippet, or of any other page, doesn't count.
+4. **Code checks** (no AI cost):
+   - 2,500–3,100 words in the body
+   - 5–7 cited pages
+   - 3 FAQs inside the article, each in a different section, and 1–5 in a final "Frequently asked questions" section
+   - a title
+   - no run of 12 or more words copied from a source
+
+   If a check fails, the agent gets the exact problems and rewrites the article.
+5. **Compliance agent.** It checks medical compliance (the compliance rules and the approved regulator pages) and compares every cited claim with the passage it cites. It also flags any uncited sentence that states a fact. The agent revises, for at most 3 reviews.
+6. **A person checks it.** The draft opens in the new-article form, next to the checks, the compliance verdict, and a **Claims and sources** table that shows each claim with its passage and link. The writer edits the draft and clicks **Submit to admin**, and it goes through the normal workflow. The article's history links to this research record, and its reviewer can open it too.
+
+**Limits:**
+- 5 versions and 3 compliance reviews per draft.
+- 4 searches and 8 pages per request; after 12 pages or 6 searches, rewrites can't search or open more.
+- One running draft per writer.
+- A draft interrupted by a restart is marked failed, with a **Try again** button.
+
+**Cost and time per draft** (estimates with the default models; the draft page and the Training page show the measured numbers):
+- about **$0.90** and **6–9 minutes** typically
+- about $0.60 and 4 minutes when the first version passes
+- about $1.50 and 15 minutes in the worst realistic case
+- with the article writer on Opus 5, about $1.50–2.00
+
+The social posts for the article cost extra after approval (see the cost estimates under "One-week trial on Railway").
 
 **Later phase (not built):** the official Instagram Insights API for your own posts' reach and saves. It will write into the same engagement table, so `get_top_posts` picks it up unchanged. The Hashtag Search API needs Meta's approval and has a weekly hashtag cap. Instagram is never scraped.
 
@@ -107,9 +143,10 @@ With every channel in `DRY_RUN_CHANNELS`, the team can use the whole workflow wh
 Costs during the trial:
 - **Claude API:** billed per use. Set a spend limit in the Anthropic Console. The Training page shows the measured cost per article. Estimates:
   - about **$0.35–0.55 per article** (3 posts), and about $1.10 in the worst case, with the default models. With every agent on Opus 5 it is $0.60–1.00.
+  - about **$0.90 for each article-agent draft** (see [Article agent](#article-agent))
   - about **$0.15–0.35 for each weekly digest**, and $0 when a week is skipped
   - about 1–2 minutes from approval until the posts are ready
-- **Web search:** $10 per 1,000 searches, at most 2 per post. Web fetch costs only tokens.
+- **Web search:** $10 per 1,000 searches, at most 2 per post and usually 4–6 per article draft. Web fetch costs only tokens.
 - **X:** charges per post, but only once X is live.
 - **Instagram, LinkedIn, webhook:** free.
 
@@ -182,6 +219,7 @@ export async function POST(request) {
 | `server.js` | routes, auth, workflow rules, background jobs |
 | `admin.js` | Training, Sources and Suggestions pages |
 | `ai.js` | trend scout, writer and compliance agents; model settings and prices |
+| `article.js` | article agent: research, cited draft, code checks, compliance review |
 | `tools.js` | read-only agent tools |
 | `knowledge.js` | versioned rules and examples |
 | `sources.js` | web sources and compliance snapshots |

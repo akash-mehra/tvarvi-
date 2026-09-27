@@ -59,6 +59,7 @@ h3 { font-size: 1rem; margin: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 label { display: grid; gap: 4px; font-weight: 600; font-size: 0.95rem; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+label > input, label > textarea, label > select { font-weight: 400; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; }
 input, select, textarea {
   font: inherit; color: inherit; background: var(--panel);
@@ -138,3 +139,10 @@ summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .metrics label { font-weight: 400; font-size: 0.85rem; width: 7.5rem; }
 .diff .gap { color: var(--muted); padding-left: 32px; }
 .snapshot { max-height: 320px; overflow: auto; background: var(--bg); padding: 8px 12px; border-radius: 6px; font-size: 0.9rem; }
+.checks { list-style: none; padding: 0; margin: 8px 0; }
+.checks li { padding: 2px 0; }
+.checks .pass { color: var(--add-text); }
+.checks .fail { color: var(--del-text); }
+.evidence td { vertical-align: top; }
+.evidence td p { margin: 0 0 6px; }
+.log { font-size: 0.85em; }
