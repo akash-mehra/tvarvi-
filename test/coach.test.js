@@ -90,8 +90,8 @@ test('the coach only proposes: evidence is verified, duplicates dropped, rules u
   const before = knowledgeCounts();
   const id = await coach.runDigest(1);
   assert.equal(calls, 1);
-  assert.deepEqual([...models], ['claude-opus-5'], 'the coach runs on Opus 5 by default');
-  assert.equal(one(`SELECT model FROM ai_calls WHERE agent = 'coach'`).model, 'claude-opus-5');
+  assert.deepEqual([...models], ['claude-opus-5-5'], 'the coach runs on Opus 5.5 by default');
+  assert.equal(one(`SELECT model FROM ai_calls WHERE agent = 'coach'`).model, 'claude-opus-5-5');
   assert.equal(digest(id).status, 'done');
   assert.equal(digest(id).note,
     '4 observations, 2 new suggestions; dropped 3 without verifiable evidence, 2 duplicates of existing or earlier ideas, 1 invalid.');

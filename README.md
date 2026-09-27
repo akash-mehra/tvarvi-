@@ -36,9 +36,9 @@ Each agent's model is set with an environment variable:
 | `MODEL_ARTICLE_WRITER` | Article agent (research and writing) | `claude-sonnet-5` |
 | `MODEL_CAROUSEL_WRITER` | Carousel slide text | `claude-sonnet-5` |
 | `MODEL_TREND_SCOUT` | Trend scouts | `claude-sonnet-5` |
-| `MODEL_COMPLIANCE` | Compliance agent (posts, articles and carousel text) | `claude-opus-5` |
+| `MODEL_COMPLIANCE` | Compliance agent (posts, articles and carousel text) | `claude-opus-5-5` |
 | `MODEL_IMAGE_CHECK` | Carousel picture check and final text check | `claude-sonnet-5` |
-| `MODEL_COACH` | Weekly coach | `claude-opus-5` |
+| `MODEL_COACH` | Weekly coach | `claude-opus-5-5` |
 | `GEMINI_IMAGE_MODEL` | Carousel pictures (Gemini) | `gemini-3.1-flash-image` |
 
 - **Supported models:** `claude-fable-5-1`, `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5` and `claude-sonnet-4-6`; for pictures, `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image` and `gemini-3-pro-image`. Any other value stops the app at startup with an error.
@@ -108,10 +108,10 @@ On the dashboard, a writer types a topic or keyword under **Draft an article wit
 - A draft interrupted by a restart is marked failed, with a **Try again** button.
 
 **Cost and time per draft** (estimates with the default models; the draft page and the Training page show the measured numbers):
-- about **$0.90** and **6–9 minutes** typically
-- about $0.60 and 4 minutes when the first version passes
-- about $1.50 and 15 minutes in the worst realistic case
-- with the article writer on Opus 5, about $1.50–2.00
+- about **$0.85** and **6–9 minutes** typically
+- about $0.55 and 4 minutes when the first version passes
+- about $1.40 and 15 minutes in the worst realistic case
+- with the article writer on Opus 5.5, about $1.20–1.60
 
 The social posts for the article cost extra after approval (see the cost estimates under "One-week trial on Railway").
 
@@ -145,11 +145,11 @@ Without `GEMINI_API_KEY` no pictures are made: the deck uses colour backgrounds 
 - One job at a time per carousel. A carousel interrupted by a restart is marked failed, with a **Try again** button that keeps text that already passed.
 
 **Cost and time per carousel** (estimates for 7 slides with the default models, prices checked in September 2026; the carousel page and the Training page show the measured numbers):
-- about **$0.95** and **4 minutes** typically (1–2 pictures made again, one compliance fix)
-- about $0.75 and 3 minutes when everything passes the first time
-- about $2.80 and 10 minutes in the worst realistic case (10 slides, every picture tried 3 times, 3 reviews)
-- at most about $4.30 when the 50-picture limit is reached
-- each saved text edit adds about $0.15 (one compliance review), each New picture $0.07–0.20
+- about **$0.90** and **4 minutes** typically (1–2 pictures made again, one compliance fix)
+- about $0.70 and 3 minutes when everything passes the first time
+- about $2.75 and 10 minutes in the worst realistic case (10 slides, every picture tried 3 times, 3 reviews)
+- at most about $4.25 when the 50-picture limit is reached
+- each saved text edit adds about $0.10 (one compliance review), each New picture $0.07–0.20
 - Gemini pictures are $0.067 each on Flash Image, $0.034 on Flash-Lite Image, $0.134 on Pro Image; a picture check is about $0.008
 - plus the designer's time in Glass Slides, and about 2 minutes to upload and tick the checklist
 
@@ -184,10 +184,10 @@ With every channel in `DRY_RUN_CHANNELS`, the team can use the whole workflow wh
 
 Costs during the trial:
 - **Claude API:** billed per use. Set a spend limit in the Anthropic Console. The Training page shows the measured cost per article. Estimates:
-  - about **$0.35–0.55 per article** (3 posts), and about $1.10 in the worst case, with the default models. With every agent on Opus 5 it is $0.60–1.00.
-  - about **$0.90 for each article-agent draft** (see [Article agent](#article-agent))
-  - about **$0.95 for each Instagram carousel**, Gemini pictures included (see [Instagram carousels](#instagram-carousels))
-  - about **$0.15–0.35 for each weekly digest**, and $0 when a week is skipped
+  - about **$0.30–0.50 per article** (3 posts), and about $1.00 in the worst case, with the default models. With every agent on Opus 5.5 it is $0.50–0.80.
+  - about **$0.85 for each article-agent draft** (see [Article agent](#article-agent))
+  - about **$0.90 for each Instagram carousel**, Gemini pictures included (see [Instagram carousels](#instagram-carousels))
+  - about **$0.10–0.30 for each weekly digest**, and $0 when a week is skipped
   - about 1–2 minutes from approval until the posts are ready
 - **Web search:** $10 per 1,000 searches, at most 2 per post and usually 4–6 per article draft. Web fetch costs only tokens.
 - **X:** charges per post, but only once X is live.

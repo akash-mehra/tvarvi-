@@ -151,19 +151,20 @@ test('article goes from writer to published, following the diagram', async (t) =
     assert.deepEqual(inputs.sort(), [`example:${example.versionId}`, `rule:${rule.versionId}`, 'snapshot:1'].sort());
     assert.ok(complianceSystems.every((s) => s.includes('APPROVED GUIDANCE TEXT') && !s.includes('PENDING GUIDANCE TEXT')));
 
-    // Writers run on Sonnet 5 and the compliance agent on Opus 5 by default, and each call records its model.
-    assert.deepEqual([[...requested.writer], [...requested.compliance]], [['claude-sonnet-5'], ['claude-opus-5']]);
+    // Writers run on Sonnet 5 and the compliance agent on Opus 5.5 by default, and each call records its model.
+    assert.deepEqual([[...requested.writer], [...requested.compliance]], [['claude-sonnet-5'], ['claude-opus-5-5']]);
     assert.deepEqual(all(`SELECT agent LIKE '% writer' AS writer, model, COUNT(*) AS n FROM ai_calls GROUP BY 1, 2 ORDER BY 1`).map((r) => ({ ...r })),
-      [{ writer: 0, model: 'claude-opus-5', n: 6 }, { writer: 1, model: 'claude-sonnet-5', n: 9 }]);
+      [{ writer: 0, model: 'claude-opus-5-5', n: 6 }, { writer: 1, model: 'claude-sonnet-5', n: 9 }]);
   });
 
   await t.test('the Training page prices each call at its own model', async () => {
     const page = await (await request(admin, '/training')).text();
-    assert.match(page, /<td>Compliance<\/td><td>claude-opus-5<\/td><td>6<\/td>/);
+    assert.match(page, /<td>Compliance<\/td><td>claude-opus-5-5<\/td><td>6<\/td>/);
     assert.match(page, /<td>Writer<\/td><td>claude-sonnet-5<\/td><td>9<\/td>/);
-    // 9 Sonnet calls at $0.004 + 6 Opus calls at $0.01 (1,000 input and 200 output tokens each); all-Opus would be $0.15.
-    assert.match(page, /Average cost per article: \$0\.10 over 1 article/);
-    assert.match(page, /Models now: writers claude-sonnet-5, article writer claude-sonnet-5, carousel writer claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5, picture check claude-sonnet-5, coach claude-opus-5, carousel pictures gemini-3\.1-flash-image/);
+    // 9 Sonnet 5 calls at $0.004 + 6 Opus 5.5 calls at $0.008 (1,000 input and 200 output tokens each) = $0.084;
+    // on Opus 5 the reviews were $0.01 each ($0.10), and all-Opus 5.5 would be $0.12.
+    assert.match(page, /Average cost per article: \$0\.08 over 1 article/);
+    assert.match(page, /Models now: writers claude-sonnet-5, article writer claude-sonnet-5, carousel writer claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5-5, picture check claude-sonnet-5, coach claude-opus-5-5, carousel pictures gemini-3\.1-flash-image/);
   });
 
   const item = (channel) => one('SELECT * FROM items WHERE channel = ?', channel);

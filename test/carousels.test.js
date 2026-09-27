@@ -258,7 +258,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
     const html = await page(admin, '/training');
     assert.match(html, /<td>Carousel agent<\/td><td>gemini-3\.1-flash-image<\/td><td>6<\/td>/);
     assert.match(html, /<td>Carousel agent<\/td><td>claude-sonnet-5<\/td>/);
-    assert.match(html, /<td>Carousel agent<\/td><td>claude-opus-5<\/td>/);
+    assert.match(html, /<td>Carousel agent<\/td><td>claude-opus-5-5<\/td>/);
     assert.match(html, /Carousels: \$0\.\d\d and 1 min each on average \(until first ready\), over 1 carousel\./);
   });
 });

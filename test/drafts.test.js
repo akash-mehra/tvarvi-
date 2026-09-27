@@ -157,7 +157,7 @@ test('a writer drafts an article with the agent, checks it and submits it into t
 
   await t.test('the Training page reports the article agent per draft', async () => {
     const html = await page(admin, '/training');
-    assert.match(html, /<td>Article agent<\/td><td>claude-opus-5<\/td>/);
+    assert.match(html, /<td>Article agent<\/td><td>claude-opus-5-5<\/td>/);
     assert.match(html, /<td>Article agent<\/td><td>claude-sonnet-5<\/td>/);
     assert.match(html, /Article agent: \$\d+\.\d\d and \d+ min per draft on average, over \d+ drafts/);
     assert.doesNotMatch(html, /Average cost per article/, 'drafts are not counted as social-post cost');
