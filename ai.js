@@ -5,7 +5,44 @@ import { approvedSnapshots, trendSources } from './sources.js';
 import { CHANNELS, clip, limitProblems } from './text.js';
 import { runTool, TOOL_DEFS, topPosts } from './tools.js';
 
-const MODEL = 'claude-opus-5';
+// Supported models: list prices in USD per million tokens (cache writes at the 5-minute rate), checked September 2026.
+// `fallback`: the model has safety classifiers, so a decline is retried server-side on another model.
+export const MODELS = {
+  'claude-fable-5-1': { input: 10, output: 50, cacheWrite: 12.5, cacheRead: 0.25, fallback: true },
+  'claude-opus-5-5': { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2, fallback: true },
+  'claude-opus-5': { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5, fallback: true },
+  'claude-opus-4-8': { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  'claude-sonnet-5': { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 },
+  'claude-sonnet-4-6': { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
+};
+export const SEARCH_PRICE = 0.01; // per web search; web fetch costs tokens only
+
+// One model per agent, set with environment variables. An unknown model stops the app at startup.
+export function agentModels(env = process.env) {
+  const pick = (name, fallback) => {
+    const model = String(env[name] ?? '').trim() || fallback;
+    if (!Object.hasOwn(MODELS, model)) {
+      throw new Error(`${name}="${model}" is not a supported model. Use one of: ${Object.keys(MODELS).join(', ')}.`);
+    }
+    return model;
+  };
+  return {
+    writer: pick('MODEL_WRITER', 'claude-sonnet-5'),
+    scout: pick('MODEL_TREND_SCOUT', 'claude-sonnet-5'),
+    compliance: pick('MODEL_COMPLIANCE', 'claude-opus-5'),
+    coach: pick('MODEL_COACH', 'claude-opus-5'),
+  };
+}
+export const MODEL = agentModels();
+
+// Cost of ai_calls rows in USD, at the price of the model that served them; null if that model's price is unknown.
+export function callCost({ model, input, output, cache_read, cache_write, searches }) {
+  const price = MODELS[model];
+  if (!price) return null;
+  return (input * price.input + output * price.output + cache_read * price.cacheRead + cache_write * price.cacheWrite) / 1e6 +
+    searches * SEARCH_PRICE;
+}
+
 const MAX_TURNS = 8; // writer API calls per post
 const MAX_REVIEWS = 3; // compliance reviews per post
 const WEB_USES = 2; // web searches and web fetches per post, each
@@ -73,30 +110,32 @@ const VERDICT_SCHEMA = {
 
 let client;
 
+// Full request for `params` (which names the model). Only models with safety classifiers accept `fallbacks`:
+// there, a decline is retried server-side on a fallback model instead of failing the post.
+export const requestParams = (params) => ({
+  max_tokens: 16000,
+  ...(MODELS[params.model]?.fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
+  ...params,
+});
+
 // `ai.ask` is an object property so tests can replace it without calling the API.
 export const ai = {
   async ask(params) {
     client ??= new Anthropic();
-    return client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      // A safety decline is retried server-side on a fallback model instead of failing the post.
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      ...params,
-    });
+    return client.beta.messages.create(requestParams(params));
   },
 };
 
 // Every Claude call goes through here, so cost and latency are measured in ai_calls.
+// The response's `model` is the model that served the call (a fallback may differ from the one requested).
 export async function callClaude(agent, articleId, params) {
   const started = Date.now();
   const res = await ai.ask(params);
   const usage = res.usage ?? {};
   run(
-    `INSERT INTO ai_calls (article_id, agent, input_tokens, output_tokens, cache_read, cache_write, web_searches, web_fetches, ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    articleId ?? null, agent, usage.input_tokens ?? 0, usage.output_tokens ?? 0, usage.cache_read_input_tokens ?? 0,
+    `INSERT INTO ai_calls (article_id, agent, model, input_tokens, output_tokens, cache_read, cache_write, web_searches, web_fetches, ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    articleId ?? null, agent, res.model ?? params.model, usage.input_tokens ?? 0, usage.output_tokens ?? 0, usage.cache_read_input_tokens ?? 0,
     usage.cache_creation_input_tokens ?? 0, usage.server_tool_use?.web_search_requests ?? 0,
     usage.server_tool_use?.web_fetch_requests ?? 0, Date.now() - started,
   );
@@ -170,6 +209,7 @@ async function scoutTrends(article, channel, inputs) {
     content: `Platform: ${label}\n\n<article>\n<title>${article.title}</title>\n${clip(article.body, 3000)}\n</article>\n\nApproved sources you may search or open:\n${trends.map((t) => t.url).join('\n')}`,
   }];
   const params = {
+    model: MODEL.scout,
     system: SCOUT(label),
     messages,
     tools: [
@@ -207,6 +247,7 @@ async function scoutTrends(article, channel, inputs) {
 async function complianceReview(article, channel, text, rules, snapshots) {
   const label = CHANNELS[channel].label;
   const res = await callClaude(`${label} compliance`, article.id, {
+    model: MODEL.compliance,
     system: complianceSystem(rules, snapshots),
     messages: [{
       role: 'user',
@@ -246,7 +287,9 @@ export async function generateItem(itemId) {
     let issues = [];
     let reviews = 0;
     for (let turn = 1; turn <= MAX_TURNS; turn++) {
-      const res = await callClaude(`${label} writer`, article.id, { system, messages, tools: WRITER_TOOLS, cache_control: { type: 'ephemeral' } });
+      const res = await callClaude(`${label} writer`, article.id, {
+        model: MODEL.writer, system, messages, tools: WRITER_TOOLS, cache_control: { type: 'ephemeral' },
+      });
       messages.push({ role: 'assistant', content: res.content });
       const calls = res.content.filter((block) => block.type === 'tool_use');
       if (!calls.length) {

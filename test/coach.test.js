@@ -16,8 +16,10 @@ run(`INSERT INTO users (id, email, name, pw_hash) VALUES (1, 'admin@example.com'
 // Stand-in for Claude: returns whatever `script` holds as the coach's JSON answer.
 let calls = 0;
 let script = { observations: [] };
-ai.ask = async () => {
+const models = new Set();
+ai.ask = async (params) => {
   calls++;
+  models.add(params.model);
   return { content: [{ type: 'text', text: JSON.stringify(script) }], stop_reason: 'end_turn', usage: { input_tokens: 5000, output_tokens: 800 } };
 };
 
@@ -88,6 +90,8 @@ test('the coach only proposes: evidence is verified, duplicates dropped, rules u
   const before = knowledgeCounts();
   const id = await coach.runDigest(1);
   assert.equal(calls, 1);
+  assert.deepEqual([...models], ['claude-opus-5'], 'the coach runs on Opus 5 by default');
+  assert.equal(one(`SELECT model FROM ai_calls WHERE agent = 'coach'`).model, 'claude-opus-5');
   assert.equal(digest(id).status, 'done');
   assert.equal(digest(id).note,
     '4 observations, 2 new suggestions; dropped 3 without verifiable evidence, 2 duplicates of existing or earlier ideas, 1 invalid.');

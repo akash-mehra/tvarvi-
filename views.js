@@ -393,11 +393,12 @@ export function trainingPage(user, { entries, usage, auditLog }) {
 <h2>AI usage, last 7 days</h2>
 ${usage.rows.length
     ? html`<table>
-  <thead><tr><th>Agent</th><th>Calls</th><th>Input tokens</th><th>Cached reads</th><th>Output tokens</th><th>Web searches</th><th>Avg. seconds</th><th>Est. cost</th></tr></thead>
-  <tbody>${usage.rows.map((r) => html`<tr><td>${r.name}</td><td>${n(r.calls)}</td><td>${n(r.input + r.cache_write)}</td><td>${n(r.cache_read)}</td><td>${n(r.output)}</td><td>${n(r.searches)}</td><td>${(r.ms / 1000).toFixed(1)}</td><td>${money(r.cost)}</td></tr>`)}</tbody>
+  <thead><tr><th>Agent</th><th>Model</th><th>Calls</th><th>Input tokens</th><th>Cached reads</th><th>Output tokens</th><th>Web searches</th><th>Avg. seconds</th><th>Est. cost</th></tr></thead>
+  <tbody>${usage.rows.map((r) => html`<tr><td>${r.name}</td><td>${r.model}</td><td>${n(r.calls)}</td><td>${n(r.input + r.cache_write)}</td><td>${n(r.cache_read)}</td><td>${n(r.output)}</td><td>${n(r.searches)}</td><td>${(r.ms / 1000).toFixed(1)}</td><td>${r.cost == null ? 'No price' : money(r.cost)}</td></tr>`)}</tbody>
 </table>
-<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}Estimated at Claude Opus 5 list prices.</p>`
+<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}Estimated at each model's list price.${usage.unpriced ? ' Calls served by a model with no listed price are left out of the total.' : ''}</p>`
     : html`<p class="muted">No AI calls in the last 7 days.</p>`}
+<p class="muted">Models now: writers ${usage.models.writer}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, coach ${usage.models.coach}. Change them with the MODEL_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE and MODEL_COACH settings.</p>
 <h2>Audit log</h2>
 ${auditLog.length
     ? html`<ol class="timeline">${auditLog.map((a) => html`<li><time>${a.at} UTC</time> ${a.who ?? 'System'}: ${a.action.replaceAll('_', ' ')}${a.detail ? html`, ${a.detail}` : ''}</li>`)}</ol>`

@@ -213,6 +213,8 @@ const MIGRATIONS = [
   );
   CREATE TABLE jobs (name TEXT PRIMARY KEY, last_run_at INTEGER NOT NULL);
   `,
+  // The model that served each call; every call before this used Claude Opus 5.
+  `ALTER TABLE ai_calls ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-5';`,
 ];
 
 for (let version = db.prepare('PRAGMA user_version').get().user_version; version < MIGRATIONS.length; version++) {

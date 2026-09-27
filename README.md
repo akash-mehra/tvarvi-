@@ -24,6 +24,22 @@ For each post, the app runs three agents in order:
 
 A human reviewer still approves every post before anything is published.
 
+### AI models
+
+Each agent's model is set with an environment variable:
+
+| Variable | Agent | Default |
+|---|---|---|
+| `MODEL_WRITER` | Social post writers | `claude-sonnet-5` |
+| `MODEL_TREND_SCOUT` | Trend scouts | `claude-sonnet-5` |
+| `MODEL_COMPLIANCE` | Compliance agent | `claude-opus-5` |
+| `MODEL_COACH` | Weekly coach | `claude-opus-5` |
+
+- **Supported models:** `claude-fable-5-1`, `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5` and `claude-sonnet-4-6`. Any other value stops the app at startup with an error.
+- **Refusal fallback:** requests to the Opus 5, Opus 5.5 and Fable 5.1 models ask the API to retry a safety-classifier refusal on a fallback model; the other models don't use that feature.
+- **Recorded model:** every AI call records the model that actually served it (a fallback can differ from the one requested).
+- **Changing a model:** set the variable (on Railway: Variables) and redeploy.
+
 **What gets recorded:** each post card's **Sources used** section lists the exact rule versions, example versions, compliance page versions, web pages and past articles that post used. Every tool call is also logged in the article history.
 
 **The tools can't leak or change data.** They are fixed, parameterized queries on a read-only database connection. They return at most 5 rows and only whitelisted fields: never users, emails, sessions or passwords. Bad or unknown tool calls return an error the model can react to.
@@ -34,7 +50,7 @@ A human reviewer still approves every post before anything is published.
 - **Example posts per platform**, with optional likes, shares and reach. The best 3 go into every writer prompt.
 - **Versions:** editing creates a new version and old versions are kept. You can deactivate, reactivate, or **roll back** to any earlier version, which saves it as a new version. Each version shows which posts used it.
 - **Promote to example:** a button on any ready or published social post. **Save engagement** on published posts records likes, shares, reach and saves; top posts are ranked by reach + 10 × shares + 3 × likes.
-- The page also shows the **measured AI cost and time** for the last 7 days, and the audit log.
+- The page also shows the **measured AI cost and time** for the last 7 days, per agent and model, and the audit log. Each call is priced at its own model's list price. The price table in `ai.js` was checked in September 2026; update it if prices change.
 
 ### Sources (admin → Sources)
 
@@ -90,7 +106,7 @@ With every channel in `DRY_RUN_CHANNELS`, the team can use the whole workflow wh
 
 Costs during the trial:
 - **Claude API:** billed per use. Set a spend limit in the Anthropic Console. The Training page shows the measured cost per article. Estimates:
-  - about **$0.60–1.00 per article** (3 posts), and about $2 in the worst case
+  - about **$0.35–0.55 per article** (3 posts), and about $1.10 in the worst case, with the default models. With every agent on Opus 5 it is $0.60–1.00.
   - about **$0.15–0.35 for each weekly digest**, and $0 when a week is skipped
   - about 1–2 minutes from approval until the posts are ready
 - **Web search:** $10 per 1,000 searches, at most 2 per post. Web fetch costs only tokens.
@@ -152,7 +168,7 @@ export async function POST(request) {
 
 - Node built-ins only (`node:http`, `node:sqlite`, `node:crypto`, `fetch`), plus `@anthropic-ai/sdk`.
 - Server-rendered HTML forms with no client JavaScript.
-- AI uses `claude-opus-5` with tool use (strict schemas), structured JSON output, prompt caching and server-side refusal fallback. No agent framework.
+- AI uses Claude with tool use (strict schemas), structured JSON output and prompt caching, with one model per agent (see [AI models](#ai-models)). There is no agent framework.
 - Background jobs (the daily compliance check and the weekly digest) run inside the app. Set `BACKGROUND_JOBS=off` on any extra instance.
 - The database schema upgrades itself on start (`PRAGMA user_version`); v1 data is kept.
 - Security:
@@ -165,7 +181,7 @@ export async function POST(request) {
 |---|---|
 | `server.js` | routes, auth, workflow rules, background jobs |
 | `admin.js` | Training, Sources and Suggestions pages |
-| `ai.js` | trend scout, writer and compliance agents |
+| `ai.js` | trend scout, writer and compliance agents; model settings and prices |
 | `tools.js` | read-only agent tools |
 | `knowledge.js` | versioned rules and examples |
 | `sources.js` | web sources and compliance snapshots |
