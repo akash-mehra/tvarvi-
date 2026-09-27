@@ -1,6 +1,6 @@
 // Admin-approved web sources. Compliance pages are fetched by this server (never by the AI), stored as
 // versioned text snapshots, and used by the compliance agent only after an admin approves each version.
-// Trend sources only define which domains the AI's web search/fetch may touch.
+// Trend and research sources only define which domains the AI's web search/fetch may touch.
 import { createHash } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns';
 import https from 'node:https';
@@ -10,7 +10,7 @@ import { clip, htmlToText } from './text.js';
 
 export class SourceError extends Error {}
 
-export const KINDS = ['compliance', 'trends'];
+export const KINDS = ['compliance', 'trends', 'research'];
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 15_000;
@@ -160,7 +160,7 @@ export async function checkAllSources() {
 }
 
 export function addSource(rawUrl, kind, userId) {
-  if (!KINDS.includes(kind)) throw new SourceError('Choose "compliance" or "trends".');
+  if (!KINDS.includes(kind)) throw new SourceError('Choose compliance, trends or research.');
   const url = parseSourceUrl(rawUrl);
   if (one('SELECT 1 FROM sources WHERE url = ?', url.href)) throw new SourceError('That link is already a source.');
   const { lastInsertRowid } = run('INSERT INTO sources (url, host, kind, created_by) VALUES (?, ?, ?, ?)', url.href, url.hostname, kind, userId);
@@ -203,6 +203,18 @@ export function approvedSnapshots() {
 }
 
 export const trendSources = () => all(`SELECT url, host FROM sources WHERE kind = 'trends' AND active = 1 ORDER BY id LIMIT 20`);
+export const researchSources = () => all(`SELECT url, host FROM sources WHERE kind = 'research' AND active = 1 ORDER BY id LIMIT 30`);
+
+// The web tools' domain rule: an https URL on one of the hosts or on a subdomain of one.
+export function onApprovedHost(rawUrl, hosts) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  return url.protocol === 'https:' && hosts.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+}
 
 export const listSources = () =>
   all(`SELECT src.*,

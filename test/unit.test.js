@@ -11,6 +11,21 @@ test('html escapes interpolations but not nested templates or raw()', () => {
     '<p title="&quot;x&quot;">&lt;script&gt;<b>&lt;i&gt;</b><br>1&amp;</p>');
 });
 
+test('textToHtml keeps reference numbers and links https URLs without letting them break out', () => {
+  assert.equal(
+    textToHtml('## References\n\n1. NHS. https://www.nhs.uk/a?x=1&y=2 (accessed 2026-09-27)\n3. See https://x.org/b.'),
+    '<h3>References</h3>\n<ol><li value="1">NHS. <a href="https://www.nhs.uk/a?x=1&amp;y=2">https://www.nhs.uk/a?x=1&amp;y=2</a> (accessed 2026-09-27)</li>'
+      + '<li value="3">See <a href="https://x.org/b">https://x.org/b</a>.</li></ol>',
+  );
+  assert.equal(textToHtml('Go https://x.org/"><script>alert(1)</script> or http://plain.example'),
+    '<p>Go <a href="https://x.org/">https://x.org/</a>&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; or http://plain.example</p>');
+});
+
+test('textToHtml renders a heading with its answer right below it (the FAQ format)', () => {
+  assert.equal(textToHtml('### Q: Is iron safe?\nYes, in the right amounts.\n#hashtag stays text'),
+    '<h4>Q: Is iron safe?</h4>\n<p>Yes, in the right amounts.<br>#hashtag stays text</p>');
+});
+
 test('textToHtml builds headings, paragraphs and lists, escaping text', () => {
   assert.equal(
     textToHtml('## Diet basics\n\nEat well\nevery day\n\n- fibre\n- iron <daily>\n\n<script>'),

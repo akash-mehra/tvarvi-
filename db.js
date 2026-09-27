@@ -215,12 +215,58 @@ const MIGRATIONS = [
   `,
   // The model that served each call; every call before this used Claude Opus 5.
   `ALTER TABLE ai_calls ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-5';`,
+  `
+  -- Research sources. SQLite can't change a CHECK constraint, so the table is rebuilt with the same rows and ids.
+  CREATE TABLE sources_new (
+    id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('compliance','trends','research')),
+    active INTEGER NOT NULL DEFAULT 1,
+    last_checked_at TEXT,
+    last_error TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  INSERT INTO sources_new (id, url, host, kind, active, last_checked_at, last_error, created_by, created_at)
+    SELECT id, url, host, kind, active, last_checked_at, last_error, created_by, created_at FROM sources;
+  DROP TABLE sources;
+  ALTER TABLE sources_new RENAME TO sources;
+
+  -- Article agent drafts: researched and written by AI, checked and submitted by a person.
+  CREATE TABLE drafts (
+    id INTEGER PRIMARY KEY,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running'
+      CHECK (status IN ('running','ready','needs_attention','failed','submitted','discarded')),
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    refs TEXT NOT NULL DEFAULT '[]',
+    evidence TEXT NOT NULL DEFAULT '[]',
+    inputs TEXT NOT NULL DEFAULT '[]',
+    checks TEXT NOT NULL DEFAULT '[]',
+    notes TEXT,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    log TEXT NOT NULL DEFAULT '',
+    article_id INTEGER REFERENCES articles(id),
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT
+  );
+  CREATE INDEX drafts_by_user ON drafts(created_by);
+  CREATE INDEX drafts_by_article ON drafts(article_id);
+  ALTER TABLE ai_calls ADD COLUMN draft_id INTEGER REFERENCES drafts(id);
+  `,
 ];
 
+// Foreign keys are off while migrating (SQLite's documented way to rebuild a table) and checked before each commit.
+db.exec('PRAGMA foreign_keys = OFF');
 for (let version = db.prepare('PRAGMA user_version').get().user_version; version < MIGRATIONS.length; version++) {
   db.exec('BEGIN IMMEDIATE');
   try {
     db.exec(MIGRATIONS[version]);
+    if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error(`Migration ${version + 1} would break a foreign key.`);
     db.exec(`PRAGMA user_version = ${version + 1}`);
     db.exec('COMMIT');
   } catch (err) {
@@ -228,6 +274,7 @@ for (let version = db.prepare('PRAGMA user_version').get().user_version; version
     throw err;
   }
 }
+db.exec('PRAGMA foreign_keys = ON');
 
 // Agent tools query through this connection, so a bug there can never write.
 export const readOnlyDb = new DatabaseSync(join(DATA_DIR, 'app.db'), { readOnly: true });
@@ -266,4 +313,6 @@ export function recoverInterrupted() {
        error = 'Interrupted by a restart. Check the platform before retrying, the post may already be live.'
        WHERE status = 'publishing'`);
   run(`UPDATE digests SET status = 'failed', note = 'Interrupted by a restart.' WHERE status = 'running'`);
+  run(`UPDATE drafts SET status = 'failed', error = 'Interrupted by a restart. Click Try again.', finished_at = CURRENT_TIMESTAMP
+       WHERE status = 'running'`);
 }

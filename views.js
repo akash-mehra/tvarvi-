@@ -47,7 +47,17 @@ const EVENT = {
   tool_call: 'AI tool call',
   promoted: 'promoted a post to an example',
   metrics: 'recorded engagement',
+  ai_drafted: 'drafted it with the article agent',
 };
+const DRAFT_STATUS = {
+  running: ['Researching and writing…', 'generating'],
+  ready: ['Ready to check', 'ready'],
+  needs_attention: ['Needs attention', 'simulated'],
+  failed: ['Failed', 'failed'],
+  submitted: ['Submitted', 'published'],
+  discarded: ['Discarded', ''],
+};
+const SOURCE_KINDS = { compliance: 'Compliance', trends: 'Trends', research: 'Research' };
 const FLAG_LABELS = { can_write: 'Writer', can_review: 'Reviewer', can_publish: 'Can publish', is_admin: 'Admin' };
 const INPUT_KINDS = { rule: 'Rule', example: 'Example', post: 'Top post', snapshot: 'Compliance page', web: 'Web page', article: 'Past article' };
 const platformName = (platform) => (platform ? CHANNELS[platform].label : 'All platforms');
@@ -134,6 +144,20 @@ ${user.can_publish ? html`<section>${articleTable('Waiting for a publisher', lis
 ${user.can_write
     ? html`<section>
   ${articleTable('My articles', lists.mine)}
+  <h2>Draft an article with AI</h2>
+  ${lists.researchReady
+      ? html`<form method="post" action="/drafts" class="inline">
+    <label>Topic or keyword <input name="topic" required minlength="3" maxlength="150" placeholder="for example: iron deficiency in women"></label>
+    <button>Research and draft</button>
+  </form>
+  <p class="muted">The article agent researches only the approved Research sites and writes about 2,800 words with 5–7 references and FAQs, in about 5–10 minutes. You check the draft before you submit it.</p>`
+      : html`<p class="muted">An admin needs to add Research sites on the Sources page first.</p>`}
+  ${lists.drafts.length
+      ? html`<table>
+    <thead><tr><th>AI draft</th><th>Status</th><th>Started (UTC)</th></tr></thead>
+    <tbody>${lists.drafts.map((d) => html`<tr><td><a href="/drafts/${d.id}">${d.topic}</a></td><td>${draftPill(d.status)}</td><td>${d.created_at}</td></tr>`)}</tbody>
+  </table>`
+      : ''}
   <h2>Write an article</h2>
   <form method="post" action="/articles" class="stack">
     <label>Title <input name="title" required maxlength="200"></label>
@@ -276,7 +300,7 @@ export function articlePage(user, { article: a, items, events, reviewers, perm, 
   return layout(a.title, user, html`
 <p><a href="/">← Dashboard</a></p>
 <h1>${a.title}</h1>
-<p class="meta">${badge(a.status)} Written by ${a.author}${a.reviewer ? html`, reviewer ${a.reviewer}` : ''}</p>
+<p class="meta">${badge(a.status)} Written by ${a.author}${a.reviewer ? html`, reviewer ${a.reviewer}` : ''}${a.draftId ? html` · <a href="/drafts/${a.draftId}">Research record</a>` : ''}</p>
 ${a.note ? html`<p class="note"><strong>Note:</strong> ${a.note}</p>` : ''}
 ${perm.assign ? assignPanel(a, reviewers) : ''}
 ${perm.review ? reviewForm(a) : html`<article class="content">${raw(textToHtml(a.body))}</article>`}
@@ -396,9 +420,9 @@ ${usage.rows.length
   <thead><tr><th>Agent</th><th>Model</th><th>Calls</th><th>Input tokens</th><th>Cached reads</th><th>Output tokens</th><th>Web searches</th><th>Avg. seconds</th><th>Est. cost</th></tr></thead>
   <tbody>${usage.rows.map((r) => html`<tr><td>${r.name}</td><td>${r.model}</td><td>${n(r.calls)}</td><td>${n(r.input + r.cache_write)}</td><td>${n(r.cache_read)}</td><td>${n(r.output)}</td><td>${n(r.searches)}</td><td>${(r.ms / 1000).toFixed(1)}</td><td>${r.cost == null ? 'No price' : money(r.cost)}</td></tr>`)}</tbody>
 </table>
-<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}Estimated at each model's list price.${usage.unpriced ? ' Calls served by a model with no listed price are left out of the total.' : ''}</p>`
+<p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}${usage.perDraft == null ? '' : `Article agent: ${money(usage.perDraft)} and ${Math.max(1, Math.round(usage.draftMinutes))} min per draft on average, over ${usage.drafts} draft${usage.drafts === 1 ? '' : 's'}. `}Estimated at each model's list price.${usage.unpriced ? ' Calls served by a model with no listed price are left out of the total.' : ''}</p>`
     : html`<p class="muted">No AI calls in the last 7 days.</p>`}
-<p class="muted">Models now: writers ${usage.models.writer}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, coach ${usage.models.coach}. Change them with the MODEL_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE and MODEL_COACH settings.</p>
+<p class="muted">Models now: writers ${usage.models.writer}, article writer ${usage.models.article}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, coach ${usage.models.coach}. Change them with the MODEL_WRITER, MODEL_ARTICLE_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE and MODEL_COACH settings.</p>
 <h2>Audit log</h2>
 ${auditLog.length
     ? html`<ol class="timeline">${auditLog.map((a) => html`<li><time>${a.at} UTC</time> ${a.who ?? 'System'}: ${a.action.replaceAll('_', ' ')}${a.detail ? html`, ${a.detail}` : ''}</li>`)}</ol>`
@@ -437,17 +461,74 @@ export function knowledgePage(user, entry, history) {
   </div>`)}</div>`);
 }
 
+// ---------- article agent drafts ----------
+
+const draftPill = (status) => pill(...(DRAFT_STATUS[status] ?? [status, '']));
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+};
+
+// The prefilled new-article form: submitting it starts the normal workflow.
+const draftForm = (d) => html`<form method="post" action="/articles" class="stack panel">
+  <input type="hidden" name="draft_id" value="${d.id}">
+  <label>Title <input name="title" value="${d.title}" required maxlength="200"></label>
+  <label>Article <textarea name="body" rows="30" required maxlength="100000">${d.body}</textarea></label>
+  <p class="muted">Check each claim against the passage it cites (below), edit what you need, then submit. The article then goes to the admin like any other.</p>
+  <div class="actions"><button>Submit to admin</button></div>
+</form>
+<form method="post" action="/drafts/${d.id}"><button name="action" value="discard" class="secondary">Discard this draft</button></form>`;
+
+export function draftPage(user, { draft: d, own }) {
+  const running = d.status === 'running';
+  const editable = own && ['ready', 'needs_attention'].includes(d.status);
+  return layout(`AI draft: ${d.topic}`, user, html`
+<p><a href="/">← Dashboard</a></p>
+<h1>AI draft: ${d.topic}</h1>
+<p class="meta">${draftPill(d.status)} Started by ${d.author} at ${d.created_at} UTC${d.finished_at
+    ? `, took ${Math.max(1, Math.round(d.seconds / 60))} min${d.cost == null ? '' : ` · AI cost ${money(d.cost)}`} · ${d.searches} searches, ${d.fetches} pages opened`
+    : ''}</p>
+${running ? html`<p class="note">The article agent is researching and writing. This takes about 5–10 minutes; the page refreshes by itself.</p>` : ''}
+${d.error ? html`<p class="error">${d.error}</p>` : ''}
+${d.status === 'failed' && own ? html`<form method="post" action="/drafts/${d.id}"><button name="action" value="retry">Try again</button></form>` : ''}
+${d.status === 'submitted' && d.article_id ? html`<p class="ok">Submitted as <a href="/articles/${d.article_id}">this article</a>.</p>` : ''}
+${d.notes ? html`<p class="${d.status === 'ready' ? 'ok' : 'warn'} pre">${d.notes}</p>` : ''}
+${d.checks.length
+    ? html`<ul class="checks">${d.checks.map((c) => html`<li class="${c.ok ? 'pass' : 'fail'}">${c.ok ? '✓' : '✗'} ${c.label}: ${c.detail}</li>`)}</ul>`
+    : ''}
+${editable ? draftForm(d) : d.body ? html`<h2>${d.title}</h2><article class="content">${raw(textToHtml(d.body))}</article>` : ''}
+${d.evidence.length
+    ? html`<details${editable ? raw(' open') : ''}><summary>Claims and the passages they cite (${d.evidence.length})</summary>
+<table class="evidence">
+  <thead><tr><th>Claim in the draft</th><th>Passage in the source</th></tr></thead>
+  <tbody>${d.evidence.map((e) => html`<tr><td>${e.claim}</td><td>${e.quotes.map((q) => {
+      const ref = d.refs.find((r) => r.n === q.n);
+      return html`<p><a href="${ref?.url ?? '#'}" target="_blank" rel="noopener noreferrer">[${q.n}] ${hostOf(ref?.url)}</a> ${q.text}</p>`;
+    })}</td></tr>`)}</tbody>
+</table></details>`
+    : ''}
+${d.inputs.length
+    ? html`<details><summary>What the agent used (${d.inputs.length})</summary>
+<ul class="inputs">${d.inputs.map((i) => html`<li>${inputLine({ kind: i.kind, ref_id: i.ref, label: i.label }, user)}</li>`)}</ul></details>`
+    : ''}
+<details${running ? raw(' open') : ''}><summary>Progress log</summary><p class="pre log">${d.log}</p></details>`, { refresh: running ? 10 : null });
+}
+
 // ---------- admin: web sources ----------
 
 export function sourcesPage(user, { sources, pending }) {
   return layout('Sources', user, html`
 <h1>Sources</h1>
-<p class="muted"><strong>Compliance</strong> pages (regulator guidance, platform health-content policies) are checked daily. A changed page waits here until you approve it; until then the compliance agent keeps using the last approved version. <strong>Trends</strong> links set the only domains the AI may search or open for trending keywords. Only https links; each domain you add becomes part of the allowlist.</p>
+<p class="muted"><strong>Compliance</strong> pages (regulator guidance, platform health-content policies) are checked daily. A changed page waits here until you approve it; until then the compliance agent keeps using the last approved version. <strong>Trends</strong> links set the only domains the AI may search or open for trending keywords. <strong>Research</strong> sites are the only medical sites the article agent may search and cite: a site covers its subdomains, so https://nih.gov allows every *.nih.gov site, while https://www.nhs.uk allows only www.nhs.uk. Only https links; each domain you add becomes part of the allowlist.</p>
 <form method="post" action="/sources" class="stack panel narrow">
   <label>Link <input type="url" name="url" required maxlength="500" placeholder="https://"></label>
   <fieldset><legend>Type</legend>
     <label class="check"><input type="radio" name="kind" value="compliance" checked> Compliance page</label>
     <label class="check"><input type="radio" name="kind" value="trends"> Trends source</label>
+    <label class="check"><input type="radio" name="kind" value="research"> Research site</label>
   </fieldset>
   <button>Add source</button>
 </form>
@@ -470,7 +551,7 @@ ${sources.length
   <thead><tr><th>Link</th><th>Type</th><th>Status</th><th>Approved version</th><th>Last check</th><th></th></tr></thead>
   <tbody>${sources.map((s) => html`<tr>
     <td><a href="${s.url}" target="_blank" rel="noopener noreferrer">${clip(s.url, 70)}</a>${s.last_error ? html`<p class="error">${s.last_error}</p>` : ''}</td>
-    <td>${s.kind === 'compliance' ? 'Compliance' : 'Trends'}</td>
+    <td>${SOURCE_KINDS[s.kind] ?? s.kind}</td>
     <td>${statusPill(s.active ? 'active' : 'inactive')}${s.pending ? html` ${statusPill('pending')}` : ''}</td>
     <td>${s.kind === 'compliance' ? (s.approved_at ? `${s.approved_at} UTC` : 'None yet') : '-'}</td>
     <td>${s.last_checked_at ? `${s.last_checked_at} UTC` : '-'}</td>

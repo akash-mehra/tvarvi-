@@ -6,12 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import * as admin from './admin.js';
 import { generateItem } from './ai.js';
+import { DraftError, getDraft, startDraft } from './article.js';
 import { runDigest } from './coach.js';
 import { all, logEvent, one, recoverInterrupted, run, tx, UPLOADS } from './db.js';
-import { BASE, backLink, count, fail, field, HttpError, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
+import { BASE, backLink, count, fail, field, HttpError, oneOf, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
 import { createEntry, latestMetrics } from './knowledge.js';
 import { publishItem } from './publish.js';
-import { checkAllSources } from './sources.js';
+import { checkAllSources, researchSources } from './sources.js';
 import { CHANNELS, limitProblems, SOCIAL } from './text.js';
 import * as view from './views.js';
 
@@ -139,6 +140,8 @@ const LIST_SQL = `SELECT a.id, a.title, a.status, a.updated_at, au.name AS autho
 function dashboard({ res, user }) {
   send(res, view.dashboardPage(user, {
     mine: user.can_write ? all(`${LIST_SQL} WHERE a.author_id = ? ORDER BY a.id DESC LIMIT 50`, user.id) : [],
+    drafts: user.can_write ? all('SELECT id, topic, status, created_at FROM drafts WHERE created_by = ? ORDER BY id DESC LIMIT 20', user.id) : [],
+    researchReady: user.can_write && researchSources().length > 0,
     queue: user.is_admin ? all(`${LIST_SQL} WHERE a.status IN ('submitted', 'returned') ORDER BY a.updated_at`) : [],
     inProgress: user.is_admin
       ? all(`${LIST_SQL} WHERE a.status IN ('in_review', 'approved', 'awaiting_publisher') ORDER BY a.updated_at DESC`)
@@ -177,12 +180,67 @@ async function createArticle({ req, res, user }) {
   const form = await readForm(req);
   const title = field(form, 'title', 'Title', 200);
   const body = field(form, 'body', 'Article', 100_000);
+  const draftId = form.get('draft_id') ? toId(form.get('draft_id')) : null;
   const id = tx(() => {
+    // An AI draft becomes an article only here, submitted by the person who started it.
+    const draft = draftId ? one('SELECT id, topic, created_by FROM drafts WHERE id = ?', draftId) : null;
+    if (draftId && draft?.created_by !== user.id) fail(403, 'You can only submit your own drafts.');
     const { lastInsertRowid } = run('INSERT INTO articles (title, body, author_id) VALUES (?, ?, ?)', title, body, user.id);
     logEvent(lastInsertRowid, user.id, 'submitted');
+    if (draft) {
+      const { changes } = run(
+        `UPDATE drafts SET status = 'submitted', article_id = ? WHERE id = ? AND status IN ('ready', 'needs_attention')`, lastInsertRowid, draft.id);
+      if (!changes) fail(409, 'This draft was already submitted or discarded.');
+      logEvent(lastInsertRowid, user.id, 'ai_drafted', `from the topic "${draft.topic}"`);
+    }
     return lastInsertRowid;
   });
   redirect(res, `/articles/${id}`);
+}
+
+// ---------- article agent drafts ----------
+
+function start(res, topic, user) {
+  let id;
+  try {
+    id = startDraft(topic, user.id);
+  } catch (err) {
+    if (err instanceof DraftError) fail(err.status, err.message);
+    throw err;
+  }
+  redirect(res, `/drafts/${id}`);
+}
+
+async function createDraft({ req, res, user }) {
+  if (!user.can_write) fail(403, 'Only writers can draft articles.');
+  start(res, field(await readForm(req), 'topic', 'Topic', 150), user);
+}
+
+// The research record: the person who started it, admins, and anyone who can see the article it became.
+function findDraft(user, id) {
+  const draft = getDraft(Number(id)) ?? fail(404, 'Draft not found.');
+  const article = draft.article_id ? getArticle(draft.article_id) : null;
+  if (!(user.is_admin || draft.created_by === user.id || (article && canView(user, article)))) fail(403, 'You do not have access to this draft.');
+  return draft;
+}
+
+function draftPage({ res, user, params: [id] }) {
+  const draft = findDraft(user, id);
+  send(res, view.draftPage(user, { draft, own: draft.created_by === user.id }));
+}
+
+async function draftAction({ req, res, user, params: [id] }) {
+  const form = await readForm(req);
+  const action = oneOf(form, 'action', 'action', ['discard', 'retry']);
+  const draft = findDraft(user, id);
+  if (draft.created_by !== user.id || !user.can_write) fail(403, 'Only the writer who started this draft can do that.');
+  if (action === 'retry') {
+    if (draft.status !== 'failed') fail(409, 'Only a failed draft can be tried again.');
+    return start(res, draft.topic, user);
+  }
+  const { changes } = run(`UPDATE drafts SET status = 'discarded' WHERE id = ? AND status IN ('ready', 'needs_attention', 'failed')`, draft.id);
+  if (!changes) fail(409, 'This draft can no longer be discarded.');
+  redirect(res, '/');
 }
 
 function articlePage({ res, user, params: [id] }) {
@@ -202,7 +260,7 @@ function articlePage({ res, user, params: [id] }) {
     metrics: !!(user.is_admin || user.can_publish),
   };
   send(res, view.articlePage(user, {
-    article: a,
+    article: { ...a, draftId: one('SELECT id FROM drafts WHERE article_id = ?', a.id)?.id ?? null },
     items: describeItems(items),
     perm,
     generating,
@@ -527,6 +585,9 @@ const routes = [
   ['POST', /^\/logout$/, logout],
   ['GET', /^\/$/, dashboard],
   ['POST', /^\/articles$/, createArticle],
+  ['POST', /^\/drafts$/, createDraft],
+  ['GET', /^\/drafts\/(\d{1,12})$/, draftPage],
+  ['POST', /^\/drafts\/(\d{1,12})$/, draftAction],
   ['GET', /^\/articles\/(\d{1,12})$/, articlePage],
   ['POST', /^\/articles\/(\d{1,12})$/, articleAction],
   ['POST', /^\/items\/(\d{1,12})$/, itemAction],

@@ -8,10 +8,11 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tvarvi-models-'));
 const { agentModels, ai, callClaude, callCost, requestParams } = await import('../ai.js');
 const { one } = await import('../db.js');
 
-test('writers and trend scouts default to Sonnet 5; compliance and coach to Opus 5', () => {
+test('writers, the article writer and trend scouts default to Sonnet 5; compliance and coach to Opus 5', () => {
   assert.deepEqual(agentModels({}), {
-    writer: 'claude-sonnet-5', scout: 'claude-sonnet-5', compliance: 'claude-opus-5', coach: 'claude-opus-5',
+    writer: 'claude-sonnet-5', article: 'claude-sonnet-5', scout: 'claude-sonnet-5', compliance: 'claude-opus-5', coach: 'claude-opus-5',
   });
+  assert.equal(agentModels({ MODEL_ARTICLE_WRITER: 'claude-opus-5' }).article, 'claude-opus-5');
   assert.equal(agentModels({ MODEL_WRITER: ' claude-opus-5 ', MODEL_COACH: '' }).writer, 'claude-opus-5');
   assert.equal(agentModels({ MODEL_COACH: '' }).coach, 'claude-opus-5');
 });
