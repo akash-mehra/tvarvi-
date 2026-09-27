@@ -196,6 +196,8 @@ export async function POST(request) {
 npm test
 ```
 
+GitHub Actions runs the same tests on Node 22 for every pull request and every push to `main` (`.github/workflows/tests.yml`).
+
 ## Known limits
 
 - **Links:** posts don't include the article link automatically. Add it while editing if you want one; on X a link raises the post price.
