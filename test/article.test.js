@@ -78,7 +78,7 @@ test('research, code checks, compliance feedback, then a draft with references b
 
   // The checks' problems went back to the writer, then the reviewer's issue.
   const feedback1 = writerCalls[1].messages.at(-1).content;
-  assert.match(feedback1, /must have 2,500–3,100/);
+  assert.match(feedback1, /must have 2,400–3,400/);
   assert.match(feedback1, /Only 4 different opened pages are cited/);
   assert.match(feedback1, /2 citations point to search results or pages you didn't open/);
   assert.match(writerCalls[2].messages.at(-1).content, /compliance reviewer found these issues:\n- "Leafy greens/);
@@ -100,7 +100,8 @@ test('research, code checks, compliance feedback, then a draft with references b
   assert.equal(reviewCalls[0].model, 'claude-opus-5-5');
   const input = reviewCalls[0].messages[0].content;
   assert.match(input, /<claim id="2" sources="2">Leafy greens, beans and nuts provide iron\.<\/claim>\n<passage claim="2" source="2">Good sources of iron include/);
-  assert.match(input, /<uncited>\n- Many people feel tired when their iron is low\./);
+  assert.match(input, /<uncited>\n- Filler sentence number 1 keeps this section easy to read\./);
+  assert.doesNotMatch(input, /<uncited>[\s\S]*(Short practical point|Description:|Source: NHS)[\s\S]*<\/uncited>/, 'takeaways, picture blocks and table sources state no new facts');
   assert.match(reviewCalls[0].system.map((b) => b.text).join('\n'), /APPROVED REGULATOR TEXT[\s\S]*Disclaimer/);
 
   // What it used, what it cost, and the live progress log.
@@ -110,7 +111,7 @@ test('research, code checks, compliance feedback, then a draft with references b
   assert.equal(one('SELECT COUNT(*) AS n FROM ai_calls WHERE draft_id = ?', d.id).n, 5);
   assert.ok(d.cost > 0);
   assert.equal(d.searches, 1);
-  for (const line of ['Searching: iron deficiency women', `Opened ${PAGES[0].url}`, 'Checks: Length, References, Citations not met', 'Compliance review 1: 1 issue', 'Done: ready for you to check']) {
+  for (const line of ['Searching: iron deficiency women', `Opened ${PAGES[0].url}`, 'Checks: References, Citations, Length not met', 'Compliance review 1: 1 issue', 'Done: ready for you to check']) {
     assert.ok(d.log.includes(line), line);
   }
 });
@@ -182,4 +183,47 @@ test('code checks: copied passages, FAQ placement, unanswered FAQs and word coun
   assert.equal(a.wordCount('Iron [12] helps women’s well-being, e.g. 1.5 mg a day.'), 9);
   assert.deepEqual(a.uncitedSentences('# T\n\n## H\n\nCited claim here [1]. An uncited claim here too. Short one.', [[9, 30]], 4),
     ['An uncited claim here too.']);
+});
+
+test('code checks: the house shape, FAQ answers, links, prices and placeholders', () => {
+  const body = a.splitArticle(article().map((b) => b.text).join('').replace(/^[\s\S]*?(?=# )/, '')).body;
+  const opts = { links: 'Gynaecologist: https://www.tvarvi.com/gynaecologist', brief: 'Starter check: ₹1,499' };
+  const failed = (text) => a.textChecks(text, opts).checks.filter((c) => !c.ok).map((c) => c.label);
+  assert.deepEqual(failed(body), []);
+
+  const [, chapter2] = body.match(/(## Part 2[\s\S]*?)(?=## Part 3)/);
+  assert.deepEqual(failed(body.replace(/Image 2:[^\n]*\nDescription:[^\n]*\nAlt text:[^\n]*/, '')), ['Picture blocks']);
+  assert.deepEqual(failed(body.replace('Image 3', 'Image 7')), ['Picture blocks'], 'numbered 1 to 3');
+  const picture3 = body.match(/Image 3:[^\n]*\nDescription:[^\n]*\nAlt text:[^\n]*/)[0];
+  assert.deepEqual(failed(body.replace(`\n\n${picture3}`, '').replace('Source: NHS, 2026', `Source: NHS, 2026\n\n${picture3}`)),
+    ['Spacing'], 'a picture block right after a table');
+  assert.deepEqual(failed(body.replace('  - Short practical point 2.3.\n', '')), ['Takeaways']);
+  assert.deepEqual(failed(body.replace('## Part 5', `${chapter2.replace(/### Q[^\n]*\n[^\n]*|Image 2[^\n]*\n[^\n]*\n[^\n]*/g, '')}## Part 5`)), ['Chapters']);
+  assert.deepEqual(failed(body.replace('It explains one practical step you can take.', 'One. Two. Three. Four.')), ['FAQ answers']);
+  assert.deepEqual(failed(body.replace('Common question 1?', 'What does part 2 mean for me?')), ['FAQs at the end']);
+  assert.deepEqual(failed(body.replace('A short, clear answer.', 'See [our gynaecologists](https://www.tvarvi.com/gynaecologist). The starter check costs ₹1,499.')), []);
+  assert.deepEqual(failed(body.replace('A short, clear answer.', 'See [others](https://rival.example/pcos) for ₹999.')), ['Links', 'Prices']);
+  assert.deepEqual(failed(body.replace('A short, clear answer.', 'See [us](https://www.tvarvi.com/gyn).')), ['Links'], 'only whole listed URLs, not a part of one');
+  assert.deepEqual(failed(body.replace('A short, clear answer.', 'About 1 in 5 women [SOURCE NEEDED: prevalence].')), ['Placeholders']);
+  assert.match(a.textChecks(body.replace('Table 1:', 'Tables 1:'), opts).problems.join('\n'), /Write exactly 2 tables[\s\S]*found 1, and 1 malformed/);
+});
+
+test('the brief reaches the writer and the compliance agent, and em dashes are replaced without a rewrite', async () => {
+  writerCalls.length = reviewCalls.length = 0;
+  writerScript = [() => reply([...research(), ...article({ extra: [text('Rest matters — a lot — for energy. ')] })])];
+  verdicts = [{ approved: true, issues: [] }];
+  const id = a.startDraft('iron and rest', 1, '  Coined concept: the energy ledger.\r\nPrices: none.  ');
+  for (const deadline = Date.now() + 5000; one('SELECT status FROM drafts WHERE id = ?', id).status === 'running';) {
+    if (Date.now() > deadline) throw new Error('Timed out');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const d = a.getDraft(id);
+  assert.equal(d.status, 'ready', d.error ?? d.notes);
+  assert.equal(d.brief, 'Coined concept: the energy ledger.\nPrices: none.');
+  assert.equal(writerCalls.length, 1, 'no rewrite for em dashes');
+  assert.match(writerCalls[0].messages[0].content, /<topic>iron and rest<\/topic>\n\n<brief>\nCoined concept: the energy ledger\.\nPrices: none\.\n<\/brief>/);
+  assert.match(reviewCalls[0].messages[0].content, /<brief>\nCoined concept: the energy ledger\./);
+  assert.match(d.body, /Rest matters, a lot, for energy\./);
+  assert.doesNotMatch(d.body, /—/);
+  assert.throws(() => a.startDraft('iron', 1, 'x'.repeat(2001)), { status: 400, message: /brief is too long/ });
 });

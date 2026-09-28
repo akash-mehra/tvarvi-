@@ -44,41 +44,132 @@ export function limitProblems(channel, text) {
   return problems;
 }
 
-// Escaped text → the same text with its https:// URLs as links. It runs after esc(), so a URL can't break out of
-// the attribute: it stops at whitespace and at escaped quotes or angle brackets; trailing punctuation stays outside.
-const linkify = (escaped) =>
-  escaped.replace(/https:\/\/(?:[^\s&]|&amp;)+/g, (url) => {
-    const trail = url.match(/[.,;:!?)]+$/)?.[0] ?? '';
-    const href = url.slice(0, url.length - trail.length);
-    return `<a href="${href}">${href}</a>${trail}`;
-  });
+// The standard disclaimer, added after the References of every website article.
+export const DISCLAIMER = 'This article is for general information and awareness. It is not medical advice and does not replace a '
+  + 'consultation with a qualified doctor. Please speak to a registered medical practitioner about your symptoms, tests or treatment. '
+  + 'If you have very heavy bleeding, severe pain or feel unwell, seek medical care promptly.';
 
-// Article text → safe HTML: blank-line paragraphs, "# " / "## " / "### " headings, "- " bullet lists,
-// "1. " numbered lists (references keep their numbers), and https:// links.
-export function textToHtml(text) {
-  return text
-    .replace(/^[ \t]*(#{1,3}[ \t]+\S.*)$/gm, '\n$1\n') // a heading is its own block, even with text right below it
+// House style: no em dashes or double hyphens in articles. Each becomes a comma (dropped at the start or end of a line
+// and before punctuation); en dashes in ranges such as "10–13%" stay, and so do table rule lines ("| --- |").
+export const noEmDashes = (text) =>
+  String(text).split('\n').map((line) => (/^\s*\|[\s|:-]*\|\s*$/.test(line)
+    ? line
+    : line
+      .replace(/[ \t]*(?:—|(?<!-)--(?!-))[ \t]*/g, '\u0000') // marks each dash with the spaces around it
+      .replace(/^(\s*(?:[-*]\s+|#{1,4}\s+)?)\u0000+/, '$1')
+      .replace(/\u0000+(?=[.,;:!?)]|$)/g, '')
+      .replace(/,?\u0000+/g, ', '))).join('\n');
+
+// Blank-line blocks of article text, with each heading as a block of its own even when text follows right below it.
+export const splitBlocks = (text) =>
+  String(text)
+    .replace(/^[ \t]*(#{1,4}[ \t]+\S.*)$/gm, '\n$1\n')
     .split(/\n\s*\n/)
     .map((block) => block.trim())
     .filter(Boolean)
-    .map((block) => {
-      const lines = block.split('\n');
-      const heading = lines.length === 1 && block.match(/^(#{1,3})\s+(.+)$/);
+    .map((block) => block.split('\n'));
+
+// A picture block, exactly three lines: "Image 1: <title>", "Description: <picture prompt>", "Alt text: <alt text>".
+export function parsePicture(lines) {
+  const [title, description, alt] = [/^Image (\d{1,2}):\s*(\S.*)$/, /^Description:\s*(\S.*)$/, /^Alt text:\s*(\S.*)$/]
+    .map((pattern, i) => lines[i]?.trim().match(pattern));
+  if (lines.length !== 3 || !title || !description || !alt) return null;
+  return { n: Number(title[1]), title: title[2].trim(), description: description[1].trim(), alt: alt[1].trim() };
+}
+
+// A table block: an optional "Table 1: <title>" line, a header row, a rule row, data rows, an optional "Source:" line.
+const ROW = /^\s*\|.*\|\s*$/;
+const RULE_ROW = /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/;
+const cells = (row) => row.trim().replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim());
+export function parseTable(lines) {
+  let i = 0;
+  const title = /^Table \d{1,2}:\s*\S/.test(lines[0]) ? lines[i++].trim() : null;
+  const rows = [];
+  while (i < lines.length && ROW.test(lines[i])) rows.push(lines[i++]);
+  const source = /^Source:\s*\S/.test(lines[i] ?? '') ? lines[i++].trim() : null;
+  if (i !== lines.length || rows.length < 3 || !RULE_ROW.test(rows[1])) return null;
+  return { title, head: cells(rows[0]), rows: rows.slice(2).map(cells), source };
+}
+
+// Every picture block in an article, in order.
+export const pictureBlocks = (text) => splitBlocks(text).map(parsePicture).filter(Boolean);
+
+// The References list's URLs by number ("1. Title. https://… (accessed …)"), for the [n] markers in the text.
+function referenceUrls(text) {
+  const urls = new Map();
+  const start = text.search(/^##\s+References\s*$/m);
+  if (start < 0) return urls;
+  for (const line of text.slice(start).split('\n')) {
+    const found = line.match(/^\s*(\d{1,4})\.\s.*?(https:\/\/\S+)/);
+    if (found && !urls.has(found[1])) urls.set(found[1], found[2].replace(/[.,;:)]+$/, ''));
+  }
+  return urls;
+}
+
+// Escaped text → the same text with [text](https://…) links, bare https:// URLs as links and [n] markers linked to their
+// reference. It runs after esc(), so a URL can't break out of the attribute: it stops at whitespace and at escaped quotes
+// or angle brackets; trailing punctuation stays outside.
+const INLINE = /\[([^\]\n]{1,200})\]\((https:\/\/(?:[^\s&)]|&amp;)+)\)|https:\/\/(?:[^\s&]|&amp;)+|\[(\d{1,4})\]/g;
+const inline = (escaped, refs) =>
+  escaped.replace(INLINE, (match, label, href, n) => {
+    if (href) return `<a href="${href}">${label}</a>`;
+    if (n) return refs.has(n) ? `<a href="${esc(refs.get(n))}">[${n}]</a>` : match;
+    const trail = match.match(/[.,;:!?)]+$/)?.[0] ?? '';
+    const url = match.slice(0, match.length - trail.length);
+    return `<a href="${url}">${url}</a>${trail}`;
+  });
+
+function list(lines, refs) {
+  const items = [];
+  for (const line of lines) {
+    const [, indent, content] = line.match(/^(\s*)[-*]\s+(.*)$/);
+    const item = inline(esc(content), refs);
+    if (indent.replace(/\t/g, '  ').length >= 2 && items.length) items.at(-1).children.push(item);
+    else items.push({ item, children: [] });
+  }
+  return `<ul>${items.map(({ item, children }) =>
+    `<li>${item}${children.length ? `<ul>${children.map((child) => `<li>${child}</li>`).join('')}</ul>` : ''}</li>`).join('')}</ul>`;
+}
+
+// Article text → safe HTML: blank-line paragraphs, headings ("## " is h2, "### " h3), bullet lists with one level of
+// nesting, numbered lists (references keep their numbers), tables, picture blocks and links. `pictures` (n → { url })
+// is given when publishing: a picture block becomes its picture, or nothing if it has none. Without it (in the app)
+// the block shows its picture prompt.
+export function textToHtml(text, { pictures } = {}) {
+  const refs = referenceUrls(text);
+  return splitBlocks(text)
+    .map((lines) => {
+      const heading = lines.length === 1 && lines[0].match(/^(#{1,4})\s+(.+)$/);
       if (heading) {
-        const level = heading[1].length + 1;
+        const level = Math.max(2, heading[1].length);
         return `<h${level}>${esc(heading[2])}</h${level}>`;
       }
-      if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-        return `<ul>${lines.map((line) => `<li>${linkify(esc(line.replace(/^\s*[-*]\s+/, '')))}</li>`).join('')}</ul>`;
+      const picture = parsePicture(lines);
+      if (picture) {
+        if (!pictures) {
+          return `<figure class="brief"><figcaption>Picture ${picture.n}: ${esc(picture.title)}</figcaption><p>${esc(picture.description)}</p>`
+            + `<p class="muted">Alt text: ${esc(picture.alt)}</p></figure>`;
+        }
+        const made = pictures.get(picture.n);
+        return made ? `<figure><img src="${esc(made.url)}" alt="${esc(picture.alt)}"><figcaption>${esc(picture.title)}</figcaption></figure>` : '';
       }
+      const table = parseTable(lines);
+      if (table) {
+        const row = (tag, values) => `<tr>${values.map((value) => `<${tag}>${inline(esc(value), refs)}</${tag}>`).join('')}</tr>`;
+        return `<table>${table.title ? `<caption>${esc(table.title)}</caption>` : ''}<thead>${row('th', table.head)}</thead>`
+          + `<tbody>${table.rows.map((values) => row('td', values)).join('')}</tbody></table>`
+          + `${table.source ? `\n<p class="source">${inline(esc(table.source), refs)}</p>` : ''}`;
+      }
+      if (lines.every((line) => /^\s*[-*]\s+/.test(line))) return list(lines, refs);
       if (lines.every((line) => /^\s*\d{1,4}\.\s+/.test(line))) {
         return `<ol>${lines.map((line) => {
           const [, n, rest] = line.match(/^\s*(\d{1,4})\.\s+(.*)$/);
-          return `<li value="${Number(n)}">${linkify(esc(rest))}</li>`;
+          return `<li value="${Number(n)}">${inline(esc(rest), refs)}</li>`;
         }).join('')}</ol>`;
       }
-      return `<p>${lines.map((line) => linkify(esc(line))).join('<br>')}</p>`;
+      return `<p>${lines.map((line) => inline(esc(line), refs)).join('<br>')}</p>`;
     })
+    .filter(Boolean)
     .join('\n');
 }
 

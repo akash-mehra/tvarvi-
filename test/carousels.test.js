@@ -35,6 +35,7 @@ ai.ask = async (params) => {
     return reply([{ type: 'tool_use', id: `toolu_${seen.length}`, name: 'submit_post', input: { text: 'Iron helps. General information, not medical advice. #Iron' } }], 'tool_use');
   }
   if (agent === 'compliance') return json(verdicts.shift() ?? { approved: true, issues: [] });
+  if (agent === 'audit') return json({ approved: true, issues: [] });
   if (agent === 'carousel writer') return json(slideSet(5));
   if (agent === 'picture check') return json({ ok: true, problems: [] });
   return json({ slides: Array.from({ length: 5 }, () => ({ ok: true, note: '' })) });
@@ -96,6 +97,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
   const reviewerId = await addUser({ name: 'Rae Reviewer', email: 'reviewer@example.com', can_review: 1 }, PASSWORD);
   await addUser({ name: 'Oli Other', email: 'other@example.com', can_review: 1 }, PASSWORD);
   await addUser({ name: 'Pat Publisher', email: 'publisher@example.com', can_publish: 1 }, PASSWORD);
+  run(`UPDATE users SET sign_name = 'Dr. Rae', sign_credentials = 'MBBS' WHERE can_review = 1`);
   const [admin, writer, reviewer, other, publisher] = await Promise.all(['admin', 'writer', 'reviewer', 'other', 'publisher'].map((r) => login(`${r}@example.com`)));
 
   assert.equal((await post(writer, '/articles', { title: 'Iron and energy', body: 'Iron matters.\n\nEat leafy greens.' })).status, 303);

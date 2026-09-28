@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { oauth1Header, toLittleText, webhookSignature } from '../publish.js';
-import { lineDiff, limitProblems, slugify, textToHtml, xLength } from '../text.js';
+import { lineDiff, limitProblems, noEmDashes, slugify, textToHtml, xLength } from '../text.js';
 import { html, raw } from '../views.js';
 
 test('html escapes interpolations but not nested templates or raw()', () => {
@@ -14,7 +14,7 @@ test('html escapes interpolations but not nested templates or raw()', () => {
 test('textToHtml keeps reference numbers and links https URLs without letting them break out', () => {
   assert.equal(
     textToHtml('## References\n\n1. NHS. https://www.nhs.uk/a?x=1&y=2 (accessed 2026-09-27)\n3. See https://x.org/b.'),
-    '<h3>References</h3>\n<ol><li value="1">NHS. <a href="https://www.nhs.uk/a?x=1&amp;y=2">https://www.nhs.uk/a?x=1&amp;y=2</a> (accessed 2026-09-27)</li>'
+    '<h2>References</h2>\n<ol><li value="1">NHS. <a href="https://www.nhs.uk/a?x=1&amp;y=2">https://www.nhs.uk/a?x=1&amp;y=2</a> (accessed 2026-09-27)</li>'
       + '<li value="3">See <a href="https://x.org/b">https://x.org/b</a>.</li></ol>',
   );
   assert.equal(textToHtml('Go https://x.org/"><script>alert(1)</script> or http://plain.example'),
@@ -23,14 +23,45 @@ test('textToHtml keeps reference numbers and links https URLs without letting th
 
 test('textToHtml renders a heading with its answer right below it (the FAQ format)', () => {
   assert.equal(textToHtml('### Q: Is iron safe?\nYes, in the right amounts.\n#hashtag stays text'),
-    '<h4>Q: Is iron safe?</h4>\n<p>Yes, in the right amounts.<br>#hashtag stays text</p>');
+    '<h3>Q: Is iron safe?</h3>\n<p>Yes, in the right amounts.<br>#hashtag stays text</p>');
 });
 
 test('textToHtml builds headings, paragraphs and lists, escaping text', () => {
   assert.equal(
     textToHtml('## Diet basics\n\nEat well\nevery day\n\n- fibre\n- iron <daily>\n\n<script>'),
-    '<h3>Diet basics</h3>\n<p>Eat well<br>every day</p>\n<ul><li>fibre</li><li>iron &lt;daily&gt;</li></ul>\n<p>&lt;script&gt;</p>',
+    '<h2>Diet basics</h2>\n<p>Eat well<br>every day</p>\n<ul><li>fibre</li><li>iron &lt;daily&gt;</li></ul>\n<p>&lt;script&gt;</p>',
   );
+});
+
+test('textToHtml renders nested takeaways, tables, links, [n] markers and picture blocks, all escaped', () => {
+  const text = [
+    '## Tvarvi Key Takeaways', '', '- Heading <one>', '  - point a', '  - point b', '- Heading two', '  - point c', '',
+    '## Chapter', '', 'See [our gynaecologists](https://www.tvarvi.com/gyn?a=1&b=2) and a claim [1], [9] or [x](javascript:alert(1)).', '',
+    'Table 1: Myths <b>', '| Myth | Fact |', '| --- | --- |', '| PCOS is rare | It is common [1] |', 'Source: WHO, 2026 [1]', '',
+    'Image 1: A walk', 'Description: A woman walking at dawn', 'Alt text: Woman "walking"', '',
+    '## References', '', '1. WHO. https://www.who.int/x (accessed 2026-09-27)',
+  ].join('\n');
+  assert.equal(textToHtml(text), [
+    '<h2>Tvarvi Key Takeaways</h2>',
+    '<ul><li>Heading &lt;one&gt;<ul><li>point a</li><li>point b</li></ul></li><li>Heading two<ul><li>point c</li></ul></li></ul>',
+    '<h2>Chapter</h2>',
+    '<p>See <a href="https://www.tvarvi.com/gyn?a=1&amp;b=2">our gynaecologists</a> and a claim <a href="https://www.who.int/x">[1]</a>, [9] or [x](javascript:alert(1)).</p>',
+    '<table><caption>Table 1: Myths &lt;b&gt;</caption><thead><tr><th>Myth</th><th>Fact</th></tr></thead><tbody><tr><td>PCOS is rare</td><td>It is common <a href="https://www.who.int/x">[1]</a></td></tr></tbody></table>',
+    '<p class="source">Source: WHO, 2026 <a href="https://www.who.int/x">[1]</a></p>',
+    '<figure class="brief"><figcaption>Picture 1: A walk</figcaption><p>A woman walking at dawn</p><p class="muted">Alt text: Woman &quot;walking&quot;</p></figure>',
+    '<h2>References</h2>',
+    '<ol><li value="1">WHO. <a href="https://www.who.int/x">https://www.who.int/x</a> (accessed 2026-09-27)</li></ol>',
+  ].join('\n'));
+  // Publishing: a picture block becomes its picture, or nothing if Gemini made none.
+  const published = textToHtml(text, { pictures: new Map([[1, { url: 'https://app.test/media/a.png' }]]) });
+  assert.match(published, /<figure><img src="https:\/\/app\.test\/media\/a\.png" alt="Woman &quot;walking&quot;"><figcaption>A walk<\/figcaption><\/figure>/);
+  assert.doesNotMatch(textToHtml(text, { pictures: new Map() }), /figure|Description|A woman walking/);
+});
+
+test('noEmDashes turns em dashes and double hyphens into commas, leaving en dashes and table rules alone', () => {
+  assert.equal(noEmDashes('PCOS — a common condition — affects many.\nPCOS—a\n— Start\nEnd —\nA,—B\na -- b'),
+    'PCOS, a common condition, affects many.\nPCOS, a\nStart\nEnd\nA, B\na, b');
+  assert.equal(noEmDashes('10–13% of women\n| --- | --- |\n---\nkeep, this,'), '10–13% of women\n| --- | --- |\n---\nkeep, this,');
 });
 
 test('lineDiff marks removed and added lines', () => {
