@@ -168,7 +168,7 @@ ${user.can_write
   ${lists.researchReady
       ? html`<form method="post" action="/drafts" class="stack">
     <label>Topic or keyword <input name="topic" required minlength="3" maxlength="150" placeholder="for example: PCOD problem and irregular periods"></label>
-    <label>Brief (optional) <textarea name="brief" rows="4" maxlength="2000" placeholder="The coined concept, the reader's worry, prices, which Tvarvi pages to link, tags, anything else the writer must follow"></textarea></label>
+    <label>Brief (optional) <textarea name="brief" rows="4" maxlength="2000" placeholder="The coined concept, the reader's worry, prices, which Tvarvi services to mention, tags, anything else the writer must follow"></textarea></label>
     <div class="actions"><button>Research and draft</button></div>
   </form>
   <p class="muted">The article agent researches only the approved Research sites and writes 2,400–3,400 words: Tvarvi Key Takeaways, 5 chapters, 3 picture blocks, 2 tables, FAQs and 5–8 references, in about 5–10 minutes. You check the draft before you submit it.</p>`

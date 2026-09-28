@@ -52,7 +52,7 @@ Each agent's model is set with an environment variable:
 
 ### Agent training (admin → Training)
 
-- **Brand rules** and **compliance rules**, for all platforms, for the **website article** only, or for one social platform. Add the brand voice guide as one brand rule titled "Voice guide". Required disclaimers and banned claims work well as separate compliance rules. Rules that only make sense for the blog (its shape, a voice with no hashtags or emoji, the Tvarvi pages it may link) go on **Website article**, so the post writers never see them; the article agent and the final audit read those plus the all-platform rules.
+- **Brand rules** and **compliance rules**, for all platforms, for the **website article** only, or for one social platform. Add the brand voice guide as one brand rule titled "Voice guide". Required disclaimers and banned claims work well as separate compliance rules. Rules that only make sense for the blog (its shape, a voice with no hashtags or emoji, its calls to action) go on **Website article**, so the post writers never see them; the article agent and the final audit read those plus the all-platform rules.
 - **Example posts per platform**, with optional likes, shares and reach. The best 3 go into every writer prompt.
 - **Versions:** editing creates a new version and old versions are kept. You can deactivate, reactivate, or **roll back** to any earlier version, which saves it as a new version. Each version shows which posts used it.
 - **Promote to example:** a button on any ready or published social post. **Save engagement** on published posts records likes, shares, reach and saves; top posts are ranked by reach + 10 × shares + 3 × likes.
@@ -85,7 +85,7 @@ It records **observations**, each with word-for-word evidence quotes and links t
 
 ## Article agent
 
-On the dashboard, a writer types a topic or keyword under **Draft an article with AI**, and optionally a **brief** (up to 2,000 characters): the coined concept, the reader's worry, prices, which Tvarvi pages to link, tags, anything else to follow. The agent then works in the background, and the draft page shows its progress live:
+On the dashboard, a writer types a topic or keyword under **Draft an article with AI**, and optionally a **brief** (up to 2,000 characters): the coined concept, the reader's worry, prices, which Tvarvi services to mention, tags, anything else to follow. The agent then works in the background, and the draft page shows its progress live:
 
 1. **Research.** It searches and opens pages on the **Research sites** only (Claude's web search and web fetch, restricted to those domains). It may use facts only from pages it actually opened.
 2. **Writing.** It writes 2,400–3,400 words in its own words, following the brief and the active brand and compliance rules, in a fixed shape: the title, **Tvarvi Key Takeaways** (3 headings with 3 points each), exactly **5 chapters**, **3 picture blocks** (`Image 1:` title, `Description:` picture prompt, `Alt text:`), **2 tables** (`Table 1:` title, a Markdown table, `Source:`), 3 FAQs inside the chapters and 1–5 at the end. Every sentence that states a fact, figure, risk, benefit or recommendation carries a citation of the exact passage it comes from. It writes no disclaimer or byline: the app adds those.
@@ -95,7 +95,7 @@ On the dashboard, a writer types a topic or keyword under **Draft an article wit
    - 5–8 cited pages, all opened by the agent
    - the takeaways, 5 chapters, 3 picture blocks and 2 tables in the shape above, each picture block and table in a different chapter, and never a picture right next to a table
    - 3 FAQs inside the article, each in a different chapter, and 1–5 in a final "Frequently asked questions" section that repeat none of them; every answer 1–3 sentences
-   - links only to URLs listed in an active rule (the Tvarvi pages), and ₹ prices only as the brief gives them
+   - no links or URLs at all (the website adds its own navigation and booking buttons), and ₹ prices only as the brief gives them
    - no `[SOURCE NEEDED]` or other `[...]` placeholders, a title, and no run of 12 or more words copied from a source
 
    If a check fails, the agent gets the exact problems and rewrites the article. Em dashes and double hyphens are simply replaced with commas, with no rewrite and no cost; the same happens to every article a person submits or edits, so no article contains one.

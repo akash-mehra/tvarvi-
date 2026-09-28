@@ -80,7 +80,7 @@ async function until(check) {
 
 const BODY = [
   '## Tvarvi Key Takeaways', '', ...['Basics', 'Food', 'Help'].flatMap((h) => [`- ${h}`, '  - One.', '  - Two.', '  - Three.']), '',
-  '## What PCOS is', '', 'PCOS — a common condition — affects many women [1]. You can talk to [a gynaecologist](https://www.tvarvi.com/gynaecologist).', '', picture(1), '',
+  '## What PCOS is', '', 'PCOS — a common condition — affects many women [1]. If you would like to talk to a gynaecologist about your cycle, you can book a consultation with Tvarvi.', '', picture(1), '',
   '## What research says', '', 'Text.', '', picture(2), '',
   '## Daily life', '', 'Text.', '', picture(3), '',
   '## Care options', '', 'Text.', '', table(1), '',
@@ -175,7 +175,8 @@ test('an approved article gets its 3 Gemini pictures, the doctor’s byline and 
     assert.deepEqual(body.byline, { author: 'Wen Writer', reviewer: 'Dr. Mehra, MBBS, PGIMS Rohtak', reviewed: day });
     assert.equal(body.title, 'PCOS, what to know');
     assert.ok(body.html.startsWith(`<p class="byline">Written by: Wen Writer<br>Medically reviewed by: Dr. Mehra, MBBS, PGIMS Rohtak<br>Last reviewed: ${day}</p>\n<h2>Tvarvi Key Takeaways</h2>`));
-    assert.match(body.html, /<a href="https:\/\/www\.tvarvi\.com\/gynaecologist">a gynaecologist<\/a>/);
+    assert.match(body.html, /you can book a consultation with Tvarvi\.<\/p>/);
+    assert.equal((body.html.match(/<a href/g) ?? []).length, 2, 'only the [1] marker and its References entry link out');
     assert.match(body.html, /affects many women <a href="https:\/\/www\.who\.int\/pcos">\[1\]<\/a>\./);
     assert.equal((body.html.match(/<table>/g) ?? []).length, 2);
     assert.doesNotMatch(body.html, /Description:|—/);
