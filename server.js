@@ -6,19 +6,20 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import * as admin from './admin.js';
 import { generateItem } from './ai.js';
-import { DraftError, getDraft, startDraft } from './article.js';
+import { auditArticle, DraftError, getDraft, startDraft, textHash } from './article.js';
 import {
   carouselByLink, carouselFor, deckJson, discardCarousel, editSlides, getCarousel, LIMITS, newLink, newPicture, readSlides,
   readyProblems, recordChecklist, retryCarousel, saveFinals, startCarousel,
 } from './carousel.js';
 import { runDigest } from './coach.js';
-import { all, logEvent, one, recoverInterrupted, run, tx, UPLOADS } from './db.js';
+import { all, audit, logEvent, one, recoverInterrupted, run, tx, UPLOADS } from './db.js';
 import { imageType } from './gemini.js';
+import { EXT, makePictures, parsePictures } from './pictures.js';
 import { BASE, backLink, count, fail, field, GLASS, HttpError, oneOf, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
 import { createEntry, latestMetrics } from './knowledge.js';
 import { publishItem } from './publish.js';
 import { checkAllSources, researchSources } from './sources.js';
-import { CAROUSEL_CHECKLIST, CHANNELS, limitProblems, slugify, SOCIAL } from './text.js';
+import { CAROUSEL_CHECKLIST, CHANNELS, limitProblems, noEmDashes, pictureBlocks, slugify, SOCIAL } from './text.js';
 import * as view from './views.js';
 
 const SESSION_MS = 12 * 60 * 60 * 1000;
@@ -179,20 +180,26 @@ function describeItems(items) {
     metrics: latestMetrics(item.id),
     promoted: one('SELECT id FROM knowledge WHERE source_item_id = ?', item.id)?.id ?? null,
     carousel: item.channel === 'instagram' ? carouselFor(item.id) : null,
+    pictures: parsePictures(item.pictures),
   }));
 }
 
 async function createArticle({ req, res, user }) {
   if (!user.can_write) fail(403, 'Only writers can submit articles.');
   const form = await readForm(req);
-  const title = field(form, 'title', 'Title', 200);
-  const body = field(form, 'body', 'Article', 100_000);
+  const title = noEmDashes(field(form, 'title', 'Title', 200));
+  const body = noEmDashes(field(form, 'body', 'Article', 100_000));
   const draftId = form.get('draft_id') ? toId(form.get('draft_id')) : null;
   const id = tx(() => {
     // An AI draft becomes an article only here, submitted by the person who started it.
-    const draft = draftId ? one('SELECT id, topic, created_by FROM drafts WHERE id = ?', draftId) : null;
+    const draft = draftId ? one('SELECT id, topic, status, title, body, created_by FROM drafts WHERE id = ?', draftId) : null;
     if (draftId && draft?.created_by !== user.id) fail(403, 'You can only submit your own drafts.');
     const { lastInsertRowid } = run('INSERT INTO articles (title, body, author_id) VALUES (?, ?, ?)', title, body, user.id);
+    // A draft that passed the checks and the compliance review, submitted unchanged, needs no second audit.
+    if (draft?.status === 'ready' && draft.title === title && draft.body === body) {
+      run(`UPDATE articles SET audit_hash = ?, audit_status = 'ready', audit_notes = ? WHERE id = ?`, textHash(title, body),
+        'The AI draft passed the code checks and the compliance review, and was submitted unchanged.', lastInsertRowid);
+    }
     logEvent(lastInsertRowid, user.id, 'submitted');
     if (draft) {
       const { changes } = run(
@@ -207,10 +214,10 @@ async function createArticle({ req, res, user }) {
 
 // ---------- article agent drafts ----------
 
-function start(res, topic, user) {
+function start(res, topic, user, brief) {
   let id;
   try {
-    id = startDraft(topic, user.id);
+    id = startDraft(topic, user.id, brief);
   } catch (err) {
     if (err instanceof DraftError) fail(err.status, err.message);
     throw err;
@@ -220,7 +227,8 @@ function start(res, topic, user) {
 
 async function createDraft({ req, res, user }) {
   if (!user.can_write) fail(403, 'Only writers can draft articles.');
-  start(res, field(await readForm(req), 'topic', 'Topic', 150), user);
+  const form = await readForm(req);
+  start(res, field(form, 'topic', 'Topic', 150), user, String(form.get('brief') ?? ''));
 }
 
 // The research record: the person who started it, admins, and anyone who can see the article it became.
@@ -243,7 +251,7 @@ async function draftAction({ req, res, user, params: [id] }) {
   if (draft.created_by !== user.id || !user.can_write) fail(403, 'Only the writer who started this draft can do that.');
   if (action === 'retry') {
     if (draft.status !== 'failed') fail(409, 'Only a failed draft can be tried again.');
-    return start(res, draft.topic, user);
+    return start(res, draft.topic, user, draft.brief);
   }
   const { changes } = run(`UPDATE drafts SET status = 'discarded' WHERE id = ? AND status IN ('ready', 'needs_attention', 'failed')`, draft.id);
   if (!changes) fail(409, 'This draft can no longer be discarded.');
@@ -265,6 +273,7 @@ function articlePage({ res, user, params: [id] }) {
     sendBack: !!user.can_publish && a.status === 'awaiting_publisher',
     promote: !!user.is_admin,
     metrics: !!(user.is_admin || user.can_publish),
+    pictures: !!process.env.GEMINI_API_KEY,
   };
   send(res, view.articlePage(user, {
     article: { ...a, draftId: one('SELECT id FROM drafts WHERE article_id = ?', a.id)?.id ?? null },
@@ -280,6 +289,24 @@ function articlePage({ res, user, params: [id] }) {
       : [],
   }));
 }
+
+// The advisory audit runs once per version of the text: a second opinion on unchanged text reuses its result.
+function startAudit(articleId, title, body) {
+  const hash = textHash(title, body);
+  const { changes } = run(
+    `UPDATE articles SET audit_hash = ?, audit_status = 'running', audit_notes = NULL WHERE id = ? AND (audit_hash IS NOT ? OR audit_status = 'failed')`,
+    hash, articleId, hash);
+  if (changes) void auditArticle(articleId, hash);
+}
+
+const AUDIT_LINES = {
+  running: 'the AI audit was still running',
+  ready: 'the AI audit found no issues',
+  issues: "approved over the AI audit's issues",
+  failed: 'the AI audit failed',
+};
+const auditLine = (a, title, body) =>
+  (a.audit_hash === textHash(title, body) && AUDIT_LINES[a.audit_status]) || 'no AI audit of this text';
 
 async function articleAction({ req, res, user, params: [id] }) {
   const a = getArticle(Number(id));
@@ -299,22 +326,29 @@ async function articleAction({ req, res, user, params: [id] }) {
         title, body, title, body, reviewer.id);
       logEvent(a.id, user.id, 'assigned', `${reviewer.name}${revert ? ' (reverted to the previous version)' : ''}`);
     });
+    startAudit(a.id, title, body);
   } else if (action === 'approve' || action === 'send_to_admin') {
     if (!isReviewer(user, a)) fail(403, 'Only the assigned reviewer can do this.');
     expectStatus(a, 'in_review');
-    const title = field(form, 'title', 'Title', 200);
-    const body = field(form, 'body', 'Article', 100_000);
-    const changed = title !== a.title || body !== a.body;
+    const title = noEmDashes(field(form, 'title', 'Title', 200));
+    const body = noEmDashes(field(form, 'body', 'Article', 100_000));
+    const changed = title !== noEmDashes(a.title) || body !== noEmDashes(a.body);
     if (action === 'approve') {
       if (changed) fail(400, 'You changed the text, so use "Send to admin" and the admin will see your changes.');
-      const itemIds = tx(() => {
-        updateArticle(a, `UPDATE articles SET status = 'approved', note = NULL`);
-        run(`INSERT INTO items (article_id, channel, status) VALUES (?, 'website', 'ready')`, a.id);
-        logEvent(a.id, user.id, 'approved');
-        return SOCIAL.map((channel) =>
-          run(`INSERT INTO items (article_id, channel, status) VALUES (?, ?, 'generating')`, a.id, channel).lastInsertRowid);
+      if (!user.sign_name) fail(400, 'Add your signing details first: click your name at the top right.');
+      // The doctor's signature goes on the article; the AI audit is only reported, never a condition.
+      const signature = `${user.sign_name}, ${user.sign_credentials}`;
+      const pictures = process.env.GEMINI_API_KEY && pictureBlocks(body).length ? 'generating' : 'ready';
+      const [websiteId, itemIds] = tx(() => {
+        updateArticle(a, `UPDATE articles SET status = 'approved', title = ?, body = ?, signature = ?, signed_at = CURRENT_TIMESTAMP, note = NULL`,
+          title, body, signature);
+        const website = run(`INSERT INTO items (article_id, channel, status) VALUES (?, 'website', ?)`, a.id, pictures).lastInsertRowid;
+        logEvent(a.id, user.id, 'approved', `signed by ${signature}; ${auditLine(a, title, body)}`);
+        return [website, SOCIAL.map((channel) =>
+          run(`INSERT INTO items (article_id, channel, status) VALUES (?, ?, 'generating')`, a.id, channel).lastInsertRowid)];
       });
       for (const itemId of itemIds) void generateItem(itemId);
+      if (pictures === 'generating') void makePictures(websiteId);
     } else {
       const secondOpinion = form.get('second_opinion') === '1';
       const note = [secondOpinion && 'Second opinion requested.', field(form, 'note', 'Note', 2000, false)].filter(Boolean).join(' ');
@@ -357,8 +391,8 @@ async function itemAction({ req, res, user, params: [id] }) {
 
   if (!isReviewer(user, a)) fail(403, 'Only the assigned reviewer can change posts.');
   expectStatus(a, 'approved');
-  if (item.channel === 'website') fail(400, 'The website item is the approved article itself.');
   if (!EDITABLE.includes(item.status)) fail(409, 'This post cannot be changed right now.');
+  if (item.channel === 'website') return websiteAction(res, user, a, item, String(action ?? ''));
   const label = CHANNELS[item.channel].label;
 
   if (action === 'save' || action === 'ready') {
@@ -386,6 +420,30 @@ async function itemAction({ req, res, user, params: [id] }) {
       logEvent(a.id, user.id, 'regenerate', label);
     });
     void generateItem(item.id);
+  } else {
+    fail(400, 'Unknown action.');
+  }
+  redirect(res, `/articles/${a.id}`);
+}
+
+// The website article's text is the approved article itself: the reviewer checks its pictures and marks it ready.
+function websiteAction(res, user, a, item, action) {
+  const single = /^picture_(\d{1,2})$/.exec(action);
+  if (action === 'ready') {
+    tx(() => {
+      updateItem(item, `UPDATE items SET error = NULL, status = 'ready', reviewed_at = CURRENT_TIMESTAMP`);
+      logEvent(a.id, user.id, 'ready', 'Website article');
+      handOffIfDone(a, user);
+    });
+  } else if (action === 'regenerate' || single) {
+    if (!process.env.GEMINI_API_KEY) fail(400, 'Pictures are off because GEMINI_API_KEY is not set.');
+    const n = single ? Number(single[1]) : null;
+    if (n != null && !pictureBlocks(a.body).some((block) => block.n === n)) fail(400, 'That picture is not in the article.');
+    tx(() => {
+      updateItem(item, `UPDATE items SET status = 'generating', error = NULL`);
+      logEvent(a.id, user.id, 'new_picture', n == null ? 'all website pictures' : `website picture ${n}`);
+    });
+    void makePictures(item.id, n);
   } else {
     fail(400, 'Unknown action.');
   }
@@ -432,7 +490,8 @@ async function publish(res, user, a, item) {
   if (!changes) return redirect(res, `/articles/${a.id}`);
   try {
     const slides = item.channel === 'instagram' ? carouselFor(item.id)?.finals ?? [] : [];
-    const { url, simulated } = await publishItem({ ...item, slides }, a, BASE);
+    const figures = item.channel === 'website' ? await publicPictures(item) : [];
+    const { url, simulated } = await publishItem({ ...item, slides, figures }, a, BASE);
     tx(() => {
       run(
         `UPDATE items SET status = 'published', external_url = ?, simulated = ?, published_by = ?, published_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -451,6 +510,22 @@ async function publish(res, user, a, item) {
     logEvent(a.id, user.id, 'publish_failed', `${label}: ${message}`);
   }
   redirect(res, `/articles/${a.id}`);
+}
+
+// The website pictures, copied under public names when the article is published, as Instagram images are, so the
+// website can fetch them. Until then they stay private.
+async function publicPictures(item) {
+  const pictures = parsePictures(item.pictures);
+  for (const picture of pictures) {
+    if (!picture.file || picture.public) continue;
+    const bytes = await readFile(join(UPLOADS, picture.file));
+    const type = imageType(bytes);
+    if (!type) continue;
+    picture.public = `${randomUUID()}.${EXT[type]}`;
+    await writeFile(join(UPLOADS, picture.public), bytes, { flag: 'wx' });
+  }
+  run('UPDATE items SET pictures = ? WHERE id = ?', JSON.stringify(pictures), item.id);
+  return pictures.filter((p) => p.public).map((p) => ({ n: p.n, title: p.title, alt: p.alt, url: `${BASE.origin}/media/${p.public}` }));
 }
 
 async function uploadImage({ req, res, user, params: [id] }) {
@@ -604,6 +679,16 @@ async function carouselPicture({ res, user, params: [id, name] }) {
   res.end(bytes);
 }
 
+// The website article's pictures, private until it is published: only people who can see the article see them.
+async function websitePicture({ res, user, params: [id, name] }) {
+  const item = one('SELECT * FROM items WHERE id = ?', Number(id)) ?? fail(404, 'Picture not found.');
+  if (!canView(user, getArticle(item.article_id))) fail(403, 'You do not have access to this picture.');
+  if (!parsePictures(item.pictures).some((p) => p.file === name)) fail(404, 'Picture not found.');
+  const bytes = await readFile(join(UPLOADS, name)).catch(() => fail(404, 'Picture not found.'));
+  res.writeHead(200, { 'content-type': imageType(bytes) ?? 'application/octet-stream', 'content-length': bytes.length, 'cache-control': 'private, max-age=3600' });
+  res.end(bytes);
+}
+
 // Public: Glass Slides fetches the deck with a link token and no cookies. Only its origin may read the answer.
 async function glassDeck({ res, params: [token] }) {
   const headers = { 'cache-control': 'no-store', ...(GLASS ? { 'access-control-allow-origin': GLASS.origin, vary: 'origin' } : {}) };
@@ -617,10 +702,10 @@ async function glassDeck({ res, params: [token] }) {
   res.end(body);
 }
 
-// Public on purpose: Instagram downloads the image from here. Names are random UUIDs.
+// Public on purpose: Instagram and the website download images from here. Names are random UUIDs.
 async function media({ res, params: [name] }) {
   const bytes = await readFile(join(UPLOADS, name)).catch(() => fail(404, 'Image not found.'));
-  res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': bytes.length, 'cache-control': 'public, max-age=31536000, immutable' });
+  res.writeHead(200, { 'content-type': imageType(bytes) ?? 'application/octet-stream', 'content-length': bytes.length, 'cache-control': 'public, max-age=31536000, immutable' });
   res.end(bytes);
 }
 
@@ -724,6 +809,22 @@ async function changePassword(ctx) {
   accountPage(ctx, 'Password changed. Other devices were logged out.');
 }
 
+// A reviewer's signing details, as they appear on every article they approve: "Dr. Mehra, MBBS, PGIMS Rohtak".
+async function saveSignature(ctx) {
+  const { req, user } = ctx;
+  if (!user.can_review) fail(403, 'Only reviewers sign articles.');
+  const form = await readForm(req);
+  const [name, credentials] = [['sign_name', 'Name', 100], ['sign_credentials', 'Qualifications', 150]].map(([key, label, max]) => {
+    const value = noEmDashes(field(form, key, label, max).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' '));
+    if (value.length < 2) fail(400, `${label} is too short.`);
+    return value;
+  });
+  run('UPDATE users SET sign_name = ?, sign_credentials = ? WHERE id = ?', name, credentials, user.id);
+  audit(user.id, 'signature_saved', `${name}, ${credentials}`);
+  accountPage({ ...ctx, user: { ...user, sign_name: name, sign_credentials: credentials } },
+    'Signing details saved. They appear on every article you approve from now on.');
+}
+
 // ---------- routing ----------
 
 const routes = [
@@ -731,7 +832,7 @@ const routes = [
   ['GET', /^\/login$/, loginPage, true],
   ['POST', /^\/login$/, login, true],
   ['GET', /^\/style\.css$/, stylesheet, true],
-  ['GET', /^\/media\/([0-9a-f-]{36}\.jpg)$/, media, true],
+  ['GET', /^\/media\/([0-9a-f-]{36}\.(?:jpg|png|webp))$/, media, true],
   ['GET', /^\/glass\/t\/([A-Za-z0-9_-]{43})$/, glassDeck, true],
   ['POST', /^\/logout$/, logout],
   ['GET', /^\/$/, dashboard],
@@ -750,11 +851,13 @@ const routes = [
   ['POST', /^\/carousels\/(\d{1,12})\/link$/, openDeck],
   ['GET', /^\/carousels\/(\d{1,12})\/deck\.json$/, downloadDeck],
   ['GET', /^\/carousels\/(\d{1,12})\/pictures\/(pic-[0-9a-f-]{36}\.(?:png|jpg|webp))$/, carouselPicture],
+  ['GET', /^\/items\/(\d{1,12})\/pictures\/(pic-[0-9a-f-]{36}\.(?:png|jpg|webp))$/, websitePicture],
   ['GET', /^\/users$/, usersPage],
   ['POST', /^\/users$/, createUser],
   ['POST', /^\/users\/(\d{1,12})$/, updateUser],
   ['GET', /^\/account$/, accountPage],
   ['POST', /^\/account$/, changePassword],
+  ['POST', /^\/account\/signature$/, saveSignature],
   ['GET', /^\/training$/, admin.trainingPage],
   ['POST', /^\/knowledge$/, admin.createKnowledge],
   ['GET', /^\/knowledge\/(\d{1,12})$/, admin.knowledgePage],
@@ -767,6 +870,9 @@ const routes = [
   ['POST', /^\/suggestions$/, admin.generateDigest],
   ['POST', /^\/suggestions\/(\d{1,12})$/, admin.suggestionAction],
 ];
+
+// Admins may also open the Team page, to take the Reviewer role off someone (themselves included) who doesn't sign.
+const SIGNING = new Set([accountPage, changePassword, saveSignature, logout, usersPage, updateUser]);
 
 // ---------- background jobs (single instance) ----------
 
@@ -809,6 +915,8 @@ export async function handler(req, res) {
     if (method === 'POST' && !sameOrigin(req)) fail(403, 'Blocked a request that did not come from this site.');
     user = currentUser(req);
     if (!isPublic && !user) return redirect(res, '/login');
+    // Reviewers sign the articles they approve, so a reviewer adds signing details before doing anything else.
+    if (!isPublic && user.can_review && !user.sign_name && !SIGNING.has(route)) return redirect(res, '/account');
     await route({ req, res, user, params: pathname.match(pattern).slice(1) });
   } catch (err) {
     if (!(err instanceof HttpError)) console.error(err);

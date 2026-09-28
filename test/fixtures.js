@@ -29,21 +29,35 @@ export const cite = (i) => [{
 }];
 export const reply = (content, stop_reason = 'end_turn', usage = {}) => ({ content, stop_reason, usage: { input_tokens: 1000, output_tokens: 500, ...usage } });
 
+// Words readers read after the title line, as the app counts them: picture blocks don't count.
 const bodyWords = (blocks) => {
   const all = blocks.map((b) => b.text).join('');
-  const body = all.slice(all.indexOf('\n', all.indexOf('# ')) + 1);
+  const body = all.slice(all.indexOf('\n', all.indexOf('# ')) + 1).replace(/^(?:Image \d+|Description|Alt text):.*$/gm, '');
   return (body.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu) ?? []).length;
 };
 
-// An article as the API returns it. `words` is the body length to aim for (filler sentences are 10 words each).
+const TAKEAWAYS = ['Iron basics', 'Food and iron', 'When to get help']
+  .map((heading, i) => `- ${heading}\n${[1, 2, 3].map((k) => `  - Short practical point ${i + 1}.${k}.`).join('\n')}`).join('\n');
+export const picture = (n) =>
+  `Image ${n}: A calm morning ${n}\nDescription: A woman in her thirties choosing vegetables in a sunlit kitchen, soft light, warm colours\nAlt text: A woman choosing vegetables`;
+export const table = (n) =>
+  `Table ${n}: Iron at a glance ${n}\n| Food | What it gives |\n| --- | --- |\n| Leafy greens | Iron |\nSource: NHS, 2026`;
+
+// An article as the API returns it, in the house shape: takeaways, 5 chapters (the claims in order, the last chapter
+// taking any beyond the fifth), 3 FAQs, picture blocks in chapters 1–3, tables in chapters 4–5 and the final FAQs.
+// `words` is the length readers read (filler sentences are 10 words each).
 export function article({ refs = [0, 1, 2, 3, 4, 5], words = 2800, bodyFaqs = 3, endFaqs = 2, extra = [] } = {}) {
-  const blocks = [text('Here is the article.\n\n# Iron and energy: a guide for women\n\nMany people feel tired when their iron is low. ')];
-  refs.forEach((ref, i) => {
-    blocks.push(text(`\n\n## Part ${i + 1}\n\n`), text(CLAIMS[ref], cite(ref)));
-    if (i < bodyFaqs) blocks.push(text(`\n\n### Q: What does part ${i + 1} mean for me?\nIt explains one practical step you can take.`));
-  });
-  blocks.push(...extra);
-  blocks.push(text(`\n\n## Frequently asked questions\n\n${Array.from({ length: endFaqs }, (_, i) => `### Q: Common question ${i + 1}?\nA short, clear answer.`).join('\n\n')}\n\nThis is general information, not medical advice. Talk to a healthcare professional.`));
+  const blocks = [text(`Here is the article.\n\n# Iron and energy: a guide for women\n\n## Tvarvi Key Takeaways\n\n${TAKEAWAYS}`)];
+  for (let c = 0; c < 5; c++) {
+    blocks.push(text(`\n\n## Part ${c + 1}\n\n`));
+    refs.forEach((ref, i) => {
+      if (Math.min(i, 4) === c) blocks.push(text(CLAIMS[ref], cite(ref)), text(' '));
+    });
+    if (c === 4) blocks.push(...extra);
+    if (c < bodyFaqs) blocks.push(text(`\n\n### Q: What does part ${c + 1} mean for me?\nIt explains one practical step you can take.`));
+    blocks.push(text(`\n\n${c < 3 ? picture(c + 1) : table(c - 2)}`));
+  }
+  blocks.push(text(`\n\n## Frequently asked questions\n\n${Array.from({ length: endFaqs }, (_, i) => `### Q: Common question ${i + 1}?\nA short, clear answer.`).join('\n\n')}`));
   const count = Math.round((words - bodyWords(blocks)) / 10);
   blocks.splice(2, 0, text(`${Array.from({ length: count }, (_, k) => `Filler sentence number ${k + 1} keeps this section easy to read.`).join(' ')} `));
   return blocks;
@@ -117,6 +131,7 @@ export async function zip(files, { deflate = false } = {}) {
 // Which agent a scripted Claude call is for, from its tools or output schema.
 export function agentOf(params) {
   const schema = params.output_config?.format?.schema;
+  if (params.system?.[0]?.text?.includes('A doctor is about to approve')) return 'audit';
   if (!schema) return params.tools?.some((t) => t.name === 'submit_post') ? 'post writer' : 'other';
   if (schema.properties.problems) return 'picture check';
   if (schema.properties.approved) return 'compliance';

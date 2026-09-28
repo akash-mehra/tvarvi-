@@ -1,5 +1,5 @@
 import { isDryRun } from './publish.js';
-import { CAROUSEL_CHECKLIST, CHANNELS, clip, compactDiff, esc, KNOWLEDGE_KINDS, lineDiff, postLength, SOCIAL, textToHtml } from './text.js';
+import { CAROUSEL_CHECKLIST, CHANNELS, clip, compactDiff, esc, KNOWLEDGE_KINDS, lineDiff, pictureBlocks, postLength, SOCIAL, textToHtml } from './text.js';
 
 // Every interpolated value is escaped unless it is itself html`` output or wrapped in raw().
 class Safe {
@@ -53,6 +53,8 @@ const EVENT = {
   carousel_slides: 'uploaded the finished carousel slides',
   carousel_checked: 'ticked the carousel image checklist',
   carousel_removed: 'turned off the Instagram carousel',
+  pictures_done: 'Gemini finished the website pictures',
+  new_picture: 'asked Gemini for a new picture',
 };
 const CAROUSEL_STATUS = {
   working: ['Working…', 'generating'],
@@ -164,11 +166,12 @@ ${user.can_write
   ${articleTable('My articles', lists.mine)}
   <h2>Draft an article with AI</h2>
   ${lists.researchReady
-      ? html`<form method="post" action="/drafts" class="inline">
-    <label>Topic or keyword <input name="topic" required minlength="3" maxlength="150" placeholder="for example: iron deficiency in women"></label>
-    <button>Research and draft</button>
+      ? html`<form method="post" action="/drafts" class="stack">
+    <label>Topic or keyword <input name="topic" required minlength="3" maxlength="150" placeholder="for example: PCOD problem and irregular periods"></label>
+    <label>Brief (optional) <textarea name="brief" rows="4" maxlength="2000" placeholder="The coined concept, the reader's worry, prices, which Tvarvi pages to link, tags, anything else the writer must follow"></textarea></label>
+    <div class="actions"><button>Research and draft</button></div>
   </form>
-  <p class="muted">The article agent researches only the approved Research sites and writes about 2,800 words with 5–7 references and FAQs, in about 5–10 minutes. You check the draft before you submit it.</p>`
+  <p class="muted">The article agent researches only the approved Research sites and writes 2,400–3,400 words: Tvarvi Key Takeaways, 5 chapters, 3 picture blocks, 2 tables, FAQs and 5–8 references, in about 5–10 minutes. You check the draft before you submit it.</p>`
       : html`<p class="muted">An admin needs to add Research sites on the Sources page first.</p>`}
   ${lists.drafts.length
       ? html`<table>
@@ -223,8 +226,21 @@ ${changed ? html`<p class="muted">Green lines were added, red lines were removed
 </section>`;
 }
 
+// The advisory AI audit of the text under review. It never blocks approval; the approval records what it said.
+const AUDIT = {
+  running: ['The AI audit is checking this text. Reload in a minute or two.', 'note'],
+  ready: ['The AI audit found no issues.', 'ok'],
+  issues: ['The AI audit found these issues. It is advice only: you decide, and your approval records what it said.', 'warn'],
+  failed: ['The AI audit could not run. You can still approve.', 'warn'],
+};
+function auditPanel(a) {
+  const [text, tone] = AUDIT[a.audit_status] ?? [];
+  if (!text) return '';
+  return html`<section class="panel"><h2>AI audit (advisory)</h2><p class="${tone}">${text}</p>${a.audit_notes ? html`<p class="pre">${a.audit_notes}</p>` : ''}</section>`;
+}
+
 // "Send to admin" comes first so pressing Enter in the title field never approves by accident.
-const reviewForm = (a) => html`<form method="post" action="/articles/${a.id}" class="stack panel">
+const reviewForm = (a, user) => html`<form method="post" action="/articles/${a.id}" class="stack panel">
   <label>Title <input name="title" value="${a.title}" required maxlength="200"></label>
   <label>Article <textarea name="body" rows="22" required maxlength="100000">${a.body}</textarea></label>
   <label>Note to the admin (optional) <textarea name="note" rows="2" maxlength="2000"></textarea></label>
@@ -233,6 +249,7 @@ const reviewForm = (a) => html`<form method="post" action="/articles/${a.id}" cl
     <button name="action" value="send_to_admin" class="secondary">Send to admin (changes or second opinion)</button>
     <button name="action" value="approve">Approve with no changes: ready to publish</button>
   </div>
+  <p class="muted">Approving signs the article as <strong>${user.sign_name ?? ''}, ${user.sign_credentials ?? ''}</strong>, with today's date. The website shows it as "Medically reviewed by".</p>
 </form>`;
 
 const EDITABLE = ['draft', 'failed', 'ready', 'publish_failed'];
@@ -309,7 +326,30 @@ const checklistFields = () => html`<fieldset class="checklist">
   ${CAROUSEL_CHECKLIST.map(([key, text]) => html`<label class="check"><input type="checkbox" name="check_${key}" value="1"> ${text}</label>`)}
 </fieldset>`;
 
-function itemCard(item, perm, user) {
+// The website article: the approved text shown above, its byline, and the pictures Gemini made for its picture blocks.
+function websiteParts(item, perm, a) {
+  const editable = perm.editItems && EDITABLE.includes(item.status);
+  const signed = a.signature ? `, medically reviewed by ${a.signature} (signed ${a.signed_at} UTC)` : '';
+  return html`<p class="muted">The approved article shown above, written by ${a.author}${signed}. Publishing adds this byline and the standard disclaimer.</p>
+  ${item.pictures.length
+    ? html`<div class="pictures">${item.pictures.map((p) => html`<figure>
+      ${p.file ? html`<img src="/items/${item.id}/pictures/${p.file}" alt="${p.alt}">` : html`<div class="blank">No picture</div>`}
+      <figcaption><strong>Picture ${p.n}: ${p.title}</strong> ${p.ok ? pill('Picture check passed', 'ready') : pill('Flagged', 'failed')}</figcaption>
+      ${p.notes?.length ? html`<ul class="warn">${p.notes.map((note) => html`<li>${note}</li>`)}</ul>` : ''}
+      ${editable ? html`<form method="post" action="/items/${item.id}"><button name="action" value="picture_${p.n}" class="secondary">New picture</button></form>` : ''}
+    </figure>`)}</div>`
+    : ''}
+  ${editable
+    ? html`<form method="post" action="/items/${item.id}" class="actions">
+    ${item.status === 'ready' ? '' : html`<button name="action" value="ready">Mark ready${item.pictures.length ? ': the pictures are fine' : ''}</button>`}
+    ${perm.pictures && (item.status === 'failed' || (!item.pictures.length && pictureBlocks(a.body).length))
+      ? html`<button name="action" value="regenerate" class="secondary">Make the pictures${item.pictures.length ? ' again' : ''}</button>`
+      : ''}
+  </form>`
+    : ''}`;
+}
+
+function itemCard(item, perm, user, a) {
   const { label, max } = CHANNELS[item.channel];
   const editable = perm.editItems && item.channel !== 'website' && EDITABLE.includes(item.status);
   const social = SOCIAL.includes(item.channel);
@@ -318,7 +358,7 @@ function itemCard(item, perm, user) {
   <header><h3>${label}</h3> ${badge(item.status)}${item.simulated ? html` <span class="badge simulated">Simulated</span>` : ''}</header>
   ${item.error ? html`<p class="error">${item.error}</p>` : ''}
   ${item.ai_notes ? html`<p class="${item.ai_ok ? 'ok' : 'warn'} pre">${item.ai_notes}</p>` : ''}
-  ${item.channel === 'website' ? html`<p class="muted">The approved article shown above.</p>` : ''}
+  ${item.channel === 'website' ? websiteParts(item, perm, a) : ''}
   ${item.channel === 'instagram'
     ? html`${editable ? carouselToggle(item, carousel) : ''}${carousel ? carouselSummary(carousel) : singleImage(item, editable)}`
     : ''}
@@ -364,7 +404,8 @@ export function articlePage(user, { article: a, items, events, reviewers, perm, 
 <p class="meta">${badge(a.status)} Written by ${a.author}${a.reviewer ? html`, reviewer ${a.reviewer}` : ''}${a.draftId ? html` · <a href="/drafts/${a.draftId}">Research record</a>` : ''}</p>
 ${a.note ? html`<p class="note"><strong>Note:</strong> ${a.note}</p>` : ''}
 ${perm.assign ? assignPanel(a, reviewers) : ''}
-${perm.review ? reviewForm(a) : html`<article class="content">${raw(textToHtml(a.body))}</article>`}
+${['in_review', 'returned'].includes(a.status) ? auditPanel(a) : ''}
+${perm.review ? reviewForm(a, user) : html`<article class="content">${raw(textToHtml(a.body))}</article>`}
 ${items.length
     ? html`<h2>Publishing</h2>
 ${generating ? html`<p class="note">The AI agents are writing the social posts. This page refreshes by itself.</p>` : ''}
@@ -380,7 +421,7 @@ ${simulated.length ? html`<p class="note">Trial mode: publishing to ${simulated.
   </form>`
       : ''}
 </div>
-<div class="items">${items.map((item) => itemCard(item, perm, user))}</div>`
+<div class="items">${items.map((item) => itemCard(item, perm, user, a))}</div>`
     : ''}
 <h2>History</h2>
 <ol class="timeline">${events.map((e) => html`
@@ -397,7 +438,9 @@ Share it privately. It won't be shown again. They can change it by clicking thei
     : ''}
 ${users.map((u) => html`
 <form method="post" action="/users/${u.id}" class="member${u.active ? '' : ' inactive'}">
-  <div><strong>${u.name}</strong><br><span class="muted">${u.email}</span></div>
+  <div><strong>${u.name}</strong><br><span class="muted">${u.email}</span>${u.can_review
+    ? html`<br><span class="muted">${u.sign_name ? `Signs as ${u.sign_name}, ${u.sign_credentials}` : 'No signing details yet'}</span>`
+    : ''}</div>
   <div class="flags">
     ${Object.entries(FLAG_LABELS).map(([flag, label]) => html`<label class="check"><input type="checkbox" name="${flag}" value="1"${u[flag] ? raw(' checked') : ''}${u.id === user.id && flag === 'is_admin' ? raw(' disabled') : ''}> ${label}</label>`)}
     <label class="check"><input type="checkbox" name="active" value="1"${u.active ? raw(' checked') : ''}${u.id === user.id ? raw(' disabled') : ''}> Active</label>
@@ -427,6 +470,16 @@ export const accountPage = (user, message) =>
 <h1>${user.name}</h1>
 <p class="muted">${user.email}</p>
 ${message ? html`<p class="ok">${message}</p>` : ''}
+${user.can_review
+    ? html`<h2>Signing details</h2>
+${user.sign_name ? '' : html`<p class="warn">You review articles, and the articles you approve carry your signature. Add your signing details to continue.</p>`}
+<form method="post" action="/account/signature" class="stack narrow">
+  <label>Name as it appears on articles <input name="sign_name" required minlength="2" maxlength="100" value="${user.sign_name ?? ''}" placeholder="Dr. Mehra"></label>
+  <label>Qualifications <input name="sign_credentials" required minlength="2" maxlength="150" value="${user.sign_credentials ?? ''}" placeholder="MBBS, PGIMS Rohtak"></label>
+  <p class="muted">Articles you approve show "Medically reviewed by: ${user.sign_name || 'Dr. Mehra'}, ${user.sign_credentials || 'MBBS, PGIMS Rohtak'}" and the date. Articles already approved keep the details they were signed with.</p>
+  <button>Save signing details</button>
+</form>`
+    : ''}
 <h2>Change password</h2>
 <form method="post" action="/account" class="stack narrow">
   <label>Current password <input type="password" name="current" required maxlength="200" autocomplete="current-password"></label>
@@ -470,7 +523,7 @@ export function trainingPage(user, { entries, usage, auditLog }) {
 <h2>Add a rule or example</h2>
 <form method="post" action="/knowledge" class="stack panel">
   <label>Type <select name="kind">${Object.entries(KNOWLEDGE_KINDS).map(([kind, text]) => html`<option value="${kind}">${text}</option>`)}</select></label>
-  <label>Platform <select name="platform"><option value="all">All platforms (rules only)</option>${SOCIAL.map((p) => html`<option value="${p}">${CHANNELS[p].label}</option>`)}</select></label>
+  <label>Platform <select name="platform"><option value="all">All platforms (rules only)</option><option value="website">Website article (rules only: the article agent and the audit)</option>${SOCIAL.map((p) => html`<option value="${p}">${CHANNELS[p].label}</option>`)}</select></label>
   ${entryFields('example')}
   <p class="muted">Likes, shares and reach are only used for examples. The brand voice guide can be one brand rule titled "Voice guide".</p>
   <button>Add</button>
@@ -483,7 +536,7 @@ ${usage.rows.length
 </table>
 <p class="muted">${usage.perArticle == null ? '' : `Average cost per article: ${money(usage.perArticle)} over ${usage.articles} article${usage.articles === 1 ? '' : 's'}. `}${usage.seconds == null ? '' : `Average time from approval until all three posts were ready: ${Math.round(usage.seconds)} s. `}${usage.perDraft == null ? '' : `Article agent: ${money(usage.perDraft)} and ${Math.max(1, Math.round(usage.draftMinutes))} min per draft on average, over ${usage.drafts} draft${usage.drafts === 1 ? '' : 's'}. `}${usage.perCarousel == null ? '' : `Carousels: ${money(usage.perCarousel)} and ${Math.max(1, Math.round(usage.carouselMinutes))} min each on average (until first ready), over ${usage.carousels} carousel${usage.carousels === 1 ? '' : 's'}. `}Estimated at each model's list price.${usage.unpriced ? ' Calls served by a model with no listed price are left out of the total.' : ''}</p>`
     : html`<p class="muted">No AI calls in the last 7 days.</p>`}
-<p class="muted">Models now: writers ${usage.models.writer}, article writer ${usage.models.article}, carousel writer ${usage.models.carousel}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, picture check ${usage.models.imageCheck}, coach ${usage.models.coach}, carousel pictures ${usage.models.picture}. Change them with the MODEL_WRITER, MODEL_ARTICLE_WRITER, MODEL_CAROUSEL_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE, MODEL_IMAGE_CHECK, MODEL_COACH and GEMINI_IMAGE_MODEL settings.</p>
+<p class="muted">Models now: writers ${usage.models.writer}, article writer ${usage.models.article}, carousel writer ${usage.models.carousel}, trend scouts ${usage.models.scout}, compliance ${usage.models.compliance}, picture check ${usage.models.imageCheck}, coach ${usage.models.coach}, carousel and website pictures ${usage.models.picture}. Change them with the MODEL_WRITER, MODEL_ARTICLE_WRITER, MODEL_CAROUSEL_WRITER, MODEL_TREND_SCOUT, MODEL_COMPLIANCE, MODEL_IMAGE_CHECK, MODEL_COACH and GEMINI_IMAGE_MODEL settings.</p>
 <h2>Audit log</h2>
 ${auditLog.length
     ? html`<ol class="timeline">${auditLog.map((a) => html`<li><time>${a.at} UTC</time> ${a.who ?? 'System'}: ${a.action.replaceAll('_', ' ')}${a.detail ? html`, ${a.detail}` : ''}</li>`)}</ol>`
@@ -553,6 +606,7 @@ export function draftPage(user, { draft: d, own }) {
     ? `, took ${Math.max(1, Math.round(d.seconds / 60))} min${d.cost == null ? '' : ` · AI cost ${money(d.cost)}`} · ${d.searches} searches, ${d.fetches} pages opened`
     : ''}</p>
 ${running ? html`<p class="note">The article agent is researching and writing. This takes about 5–10 minutes; the page refreshes by itself.</p>` : ''}
+${d.brief ? html`<details><summary>Brief</summary><p class="pre">${d.brief}</p></details>` : ''}
 ${d.error ? html`<p class="error">${d.error}</p>` : ''}
 ${d.status === 'failed' && own ? html`<form method="post" action="/drafts/${d.id}"><button name="action" value="retry">Try again</button></form>` : ''}
 ${d.status === 'submitted' && d.article_id ? html`<p class="ok">Submitted as <a href="/articles/${d.article_id}">this article</a>.</p>` : ''}

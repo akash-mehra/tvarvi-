@@ -28,8 +28,14 @@ const complianceSystems = [];
 const reply = (content, stopReason) => ({ content, stop_reason: stopReason, usage: { input_tokens: 1000, output_tokens: 200 } });
 const toolUse = (name, input) => ({ type: 'tool_use', id: `toolu_${++nextId}`, name, input });
 const requested = { writer: new Set(), compliance: new Set() };
+const audits = [];
 ai.ask = async (params) => {
   requested[params.output_config ? 'compliance' : 'writer'].add(params.model);
+  // The advisory audit of the text a reviewer sees: it flags one issue, which must not stop the approval.
+  if (params.system?.[0]?.text?.includes('A doctor is about to approve')) {
+    audits.push(params.messages[0].content);
+    return reply([{ type: 'text', text: JSON.stringify({ approved: false, issues: ['Cite the source for "Iron matters."'] }) }], 'end_turn');
+  }
   if (params.output_config) {
     complianceSystems.push(params.system.map((block) => block.text).join('\n'));
     const approved = params.messages[0].content.includes('not medical advice');
@@ -107,6 +113,26 @@ test('article goes from writer to published, following the diagram', async (t) =
     assert.equal(status(), 'in_review');
   });
 
+  await t.test('a reviewer adds signing details before doing anything else', async () => {
+    const res = await request(reviewer, '/');
+    assert.deepEqual([res.status, res.headers.get('location')], [303, '/account']);
+    assert.equal((await post(reviewer, '/articles/1', { action: 'approve', title: article.title, body: article.body })).headers.get('location'), '/account');
+    assert.match(await (await request(reviewer, '/account')).text(), /Add your signing details to continue/);
+    assert.equal((await post(reviewer, '/account/signature', { sign_name: 'Dr. Rae', sign_credentials: '' })).status, 400);
+    assert.equal((await post(writer, '/account/signature', { sign_name: 'Wen', sign_credentials: 'MBBS' })).status, 403, 'only reviewers sign');
+    const saved = await post(reviewer, '/account/signature', { sign_name: 'Dr. Rae  Reviewer', sign_credentials: 'MBBS — PGIMS Rohtak' });
+    assert.equal(saved.status, 200);
+    assert.deepEqual({ ...one(`SELECT sign_name, sign_credentials FROM users WHERE id = ?`, reviewerId) },
+      { sign_name: 'Dr. Rae Reviewer', sign_credentials: 'MBBS, PGIMS Rohtak' });
+    assert.equal((await request(reviewer, '/')).status, 200);
+    assert.match(await (await request(admin, '/users')).text(), /Signs as Dr\. Rae Reviewer, MBBS, PGIMS Rohtak/);
+    // The advisory audit ran on the assigned text; the reviewer sees it above the review form.
+    await waitFor(() => one('SELECT audit_status FROM articles WHERE id = 1').audit_status !== 'running');
+    const page = await (await request(reviewer, '/articles/1')).text();
+    assert.match(page, /AI audit \(advisory\)[\s\S]*Cite the source for &quot;Iron matters\.&quot;/);
+    assert.match(page, /Approving signs the article as <strong>Dr\. Rae Reviewer, MBBS, PGIMS Rohtak<\/strong>/);
+  });
+
   await t.test('reviewer edits: old and new versions go to the admin as a diff', async () => {
     const res = await post(reviewer, '/articles/1', { action: 'send_to_admin', title: article.title, body: 'Iron matters.\n\nEat leafy greens daily.' });
     assert.equal(res.status, 303);
@@ -134,6 +160,12 @@ test('article goes from writer to published, following the diagram', async (t) =
     const res = await post(reviewer, '/articles/1', { action: 'approve', title: article.title, body: 'Iron matters.\n\nEat leafy greens daily.' });
     assert.equal(res.status, 303);
     assert.equal(status(), 'approved');
+    // Signed by the reviewer; the audit's issue was reported, not a condition. One audit per version of the text.
+    assert.equal(one('SELECT signature FROM articles WHERE id = 1').signature, 'Dr. Rae Reviewer, MBBS, PGIMS Rohtak');
+    assert.match(one(`SELECT detail FROM events WHERE action = 'approved'`).detail,
+      /^signed by Dr\. Rae Reviewer, MBBS, PGIMS Rohtak; approved over the AI audit's issues$/);
+    assert.equal(audits.length, 2);
+    assert.match(audits[1], /Eat leafy greens daily\./);
     await waitFor(() => !one(`SELECT 1 FROM items WHERE status = 'generating'`));
     const posts = all(`SELECT id, channel, status, ai_ok, rounds, ai_draft, body FROM items WHERE channel != 'website' ORDER BY channel`);
     assert.deepEqual(posts.map((p) => [p.channel, p.status, p.ai_ok, p.rounds]),
@@ -153,7 +185,7 @@ test('article goes from writer to published, following the diagram', async (t) =
 
     // Writers run on Sonnet 5 and the compliance agent on Opus 5.5 by default, and each call records its model.
     assert.deepEqual([[...requested.writer], [...requested.compliance]], [['claude-sonnet-5'], ['claude-opus-5-5']]);
-    assert.deepEqual(all(`SELECT agent LIKE '% writer' AS writer, model, COUNT(*) AS n FROM ai_calls GROUP BY 1, 2 ORDER BY 1`).map((r) => ({ ...r })),
+    assert.deepEqual(all(`SELECT agent LIKE '% writer' AS writer, model, COUNT(*) AS n FROM ai_calls WHERE agent != 'Final audit' GROUP BY 1, 2 ORDER BY 1`).map((r) => ({ ...r })),
       [{ writer: 0, model: 'claude-opus-5-5', n: 6 }, { writer: 1, model: 'claude-sonnet-5', n: 9 }]);
   });
 
@@ -161,10 +193,11 @@ test('article goes from writer to published, following the diagram', async (t) =
     const page = await (await request(admin, '/training')).text();
     assert.match(page, /<td>Compliance<\/td><td>claude-opus-5-5<\/td><td>6<\/td>/);
     assert.match(page, /<td>Writer<\/td><td>claude-sonnet-5<\/td><td>9<\/td>/);
-    // 9 Sonnet 5 calls at $0.004 + 6 Opus 5.5 calls at $0.008 (1,000 input and 200 output tokens each) = $0.084;
-    // on Opus 5 the reviews were $0.01 each ($0.10), and all-Opus 5.5 would be $0.12.
-    assert.match(page, /Average cost per article: \$0\.08 over 1 article/);
-    assert.match(page, /Models now: writers claude-sonnet-5, article writer claude-sonnet-5, carousel writer claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5-5, picture check claude-sonnet-5, coach claude-opus-5-5, carousel pictures gemini-3\.1-flash-image/);
+    assert.match(page, /<td>Final audit<\/td><td>claude-opus-5-5<\/td><td>2<\/td>/);
+    // 9 Sonnet 5 calls at $0.004 + 6 Opus 5.5 reviews and 2 Opus 5.5 audits at $0.008 (1,000 input and 200 output
+    // tokens each) = $0.10.
+    assert.match(page, /Average cost per article: \$0\.10 over 1 article/);
+    assert.match(page, /Models now: writers claude-sonnet-5, article writer claude-sonnet-5, carousel writer claude-sonnet-5, trend scouts claude-sonnet-5, compliance claude-opus-5-5, picture check claude-sonnet-5, coach claude-opus-5-5, carousel and website pictures gemini-3\.1-flash-image/);
   });
 
   const item = (channel) => one('SELECT * FROM items WHERE channel = ?', channel);

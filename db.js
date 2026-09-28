@@ -283,6 +283,37 @@ const MIGRATIONS = [
   );
   ALTER TABLE ai_calls ADD COLUMN carousel_id INTEGER REFERENCES carousels(id);
   `,
+  `
+  -- Doctor sign-off: each reviewer's signing details, and the signature copied onto an article when they approve it.
+  ALTER TABLE users ADD COLUMN sign_name TEXT;
+  ALTER TABLE users ADD COLUMN sign_credentials TEXT;
+  ALTER TABLE articles ADD COLUMN signature TEXT;
+  ALTER TABLE articles ADD COLUMN signed_at TEXT;
+  -- The advisory AI audit of the exact text a reviewer sees (it never blocks approval).
+  ALTER TABLE articles ADD COLUMN audit_hash TEXT;
+  ALTER TABLE articles ADD COLUMN audit_status TEXT CHECK (audit_status IN ('running','ready','issues','failed'));
+  ALTER TABLE articles ADD COLUMN audit_notes TEXT;
+  -- The writer's brief for the article agent, and the website article's pictures (JSON), made by Gemini after approval.
+  ALTER TABLE drafts ADD COLUMN brief TEXT NOT NULL DEFAULT '';
+  ALTER TABLE items ADD COLUMN pictures TEXT NOT NULL DEFAULT '[]';
+
+  -- Rules for the website article alone. SQLite can't change a CHECK constraint, so the table is rebuilt as is.
+  CREATE TABLE knowledge_new (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('brand_rule','compliance_rule','example')),
+    platform TEXT CHECK (platform IN ('website','instagram','linkedin','x')),
+    active INTEGER NOT NULL DEFAULT 1,
+    current_version_id INTEGER,
+    source_item_id INTEGER UNIQUE REFERENCES items(id),
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (kind != 'example' OR platform IN ('instagram','linkedin','x'))
+  );
+  INSERT INTO knowledge_new (id, kind, platform, active, current_version_id, source_item_id, created_by, created_at)
+    SELECT id, kind, platform, active, current_version_id, source_item_id, created_by, created_at FROM knowledge;
+  DROP TABLE knowledge;
+  ALTER TABLE knowledge_new RENAME TO knowledge;
+  `,
 ];
 
 // Foreign keys are off while migrating (SQLite's documented way to rebuild a table) and checked before each commit.
@@ -341,4 +372,5 @@ export function recoverInterrupted() {
   run(`UPDATE drafts SET status = 'failed', error = 'Interrupted by a restart. Click Try again.', finished_at = CURRENT_TIMESTAMP
        WHERE status = 'running'`);
   run(`UPDATE carousels SET status = 'failed', error = 'Interrupted by a restart. Click Try again.' WHERE status = 'working'`);
+  run(`UPDATE articles SET audit_status = 'failed', audit_notes = 'Interrupted by a restart.' WHERE audit_status = 'running'`);
 }

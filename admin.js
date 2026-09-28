@@ -18,6 +18,7 @@ const requireAdmin = (user) => user.is_admin || fail(403, 'Only admins can do th
 function usageSummary() {
   const rows = all(
     `SELECT CASE WHEN agent LIKE 'Carousel %' THEN 'Carousel agent' WHEN agent LIKE 'Article %' THEN 'Article agent'
+                 WHEN agent LIKE 'Website picture%' THEN 'Website pictures' WHEN agent = 'Final audit' THEN 'Final audit'
                  WHEN agent LIKE '% writer' THEN 'Writer' WHEN agent LIKE '% compliance' THEN 'Compliance'
                  WHEN agent LIKE '% trend scout' THEN 'Trend scout' ELSE 'Coach' END AS name, model,
        COUNT(*) AS calls, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cache_read,
@@ -81,8 +82,8 @@ export async function createKnowledge({ req, res, user }) {
   requireAdmin(user);
   const form = await readForm(req);
   const kind = oneOf(form, 'kind', 'type', Object.keys(KINDS));
-  const platform = oneOf(form, 'platform', 'platform', ['all', ...PLATFORMS]);
-  if (kind === 'example' && platform === 'all') fail(400, 'Choose the platform this example is for.');
+  const platform = oneOf(form, 'platform', 'platform', ['all', 'website', ...PLATFORMS]);
+  if (kind === 'example' && !PLATFORMS.includes(platform)) fail(400, 'Examples are social posts: choose Instagram, LinkedIn or X.');
   const { id } = createEntry({ kind, platform: platform === 'all' ? null : platform, ...entryFields(form, kind) }, user.id);
   redirect(res, `/knowledge/${id}`);
 }

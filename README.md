@@ -4,11 +4,11 @@ This app runs the company's content workflow from the "human input" diagram:
 
 1. A **writer** submits an article, and it lands on the **admin** dashboard.
 2. The admin **assigns a reviewer**.
-3. The reviewer either:
+3. The reviewer, a doctor, sees an advisory **AI audit** of the text and either:
    - **edits the article or asks for a second opinion**. It goes back to the admin, who sees the old and new versions (added lines green, removed lines red) and reassigns it, or
-   - **approves it unchanged**.
-4. Approval starts three **AI agent complexes**, one each for Instagram, LinkedIn and X. In each one, a *writer agent* (platform algorithm and SEO) drafts a post and a *compliance agent* (medical accuracy) reviews it, for up to 3 rounds.
-5. The reviewer edits the posts if needed and marks all four items ready: the website article plus three posts. The Instagram post is either a single image or a **carousel** (see [Instagram carousels](#instagram-carousels)).
+   - **approves it unchanged**, which signs it with their name and qualifications (see [Website article](#website-article)).
+4. Approval starts three **AI agent complexes**, one each for Instagram, LinkedIn and X. In each one, a *writer agent* (platform algorithm and SEO) drafts a post and a *compliance agent* (medical accuracy) reviews it, for up to 3 rounds. Gemini also makes the website article's 3 pictures.
+5. The reviewer checks the pictures, edits the posts if needed and marks all four items ready: the website article plus three posts. The Instagram post is either a single image or a **carousel** (see [Instagram carousels](#instagram-carousels)).
 6. **Trusted people publish** each item with its own button. If the reviewer can't publish, or wants a final look, the set goes to the **publisher dashboard**.
 
 Every step is recorded in each article's history.
@@ -52,7 +52,7 @@ Each agent's model is set with an environment variable:
 
 ### Agent training (admin → Training)
 
-- **Brand rules** and **compliance rules**, for all platforms or just one. Add the brand voice guide as one brand rule titled "Voice guide". Required disclaimers and banned claims work well as separate compliance rules.
+- **Brand rules** and **compliance rules**, for all platforms, for the **website article** only, or for one social platform. Add the brand voice guide as one brand rule titled "Voice guide". Required disclaimers and banned claims work well as separate compliance rules. Rules that only make sense for the blog (its shape, a voice with no hashtags or emoji, the Tvarvi pages it may link) go on **Website article**, so the post writers never see them; the article agent and the final audit read those plus the all-platform rules.
 - **Example posts per platform**, with optional likes, shares and reach. The best 3 go into every writer prompt.
 - **Versions:** editing creates a new version and old versions are kept. You can deactivate, reactivate, or **roll back** to any earlier version, which saves it as a new version. Each version shows which posts used it.
 - **Promote to example:** a button on any ready or published social post. **Save engagement** on published posts records likes, shares, reach and saves; top posts are ranked by reach + 10 × shares + 3 × likes.
@@ -85,19 +85,20 @@ It records **observations**, each with word-for-word evidence quotes and links t
 
 ## Article agent
 
-On the dashboard, a writer types a topic or keyword under **Draft an article with AI**. The agent then works in the background, and the draft page shows its progress live:
+On the dashboard, a writer types a topic or keyword under **Draft an article with AI**, and optionally a **brief** (up to 2,000 characters): the coined concept, the reader's worry, prices, which Tvarvi pages to link, tags, anything else to follow. The agent then works in the background, and the draft page shows its progress live:
 
 1. **Research.** It searches and opens pages on the **Research sites** only (Claude's web search and web fetch, restricted to those domains). It may use facts only from pages it actually opened.
-2. **Writing.** It writes about 2,800 words in its own words, following the active brand and compliance rules. Every sentence that states a fact, figure, risk, benefit or recommendation carries a citation of the exact passage it comes from.
+2. **Writing.** It writes 2,400–3,400 words in its own words, following the brief and the active brand and compliance rules, in a fixed shape: the title, **Tvarvi Key Takeaways** (3 headings with 3 points each), exactly **5 chapters**, **3 picture blocks** (`Image 1:` title, `Description:` picture prompt, `Alt text:`), **2 tables** (`Table 1:` title, a Markdown table, `Source:`), 3 FAQs inside the chapters and 1–5 at the end. Every sentence that states a fact, figure, risk, benefit or recommendation carries a citation of the exact passage it comes from. It writes no disclaimer or byline: the app adds those.
 3. **References.** The app, not the model, turns the citations into `[n]` markers and a numbered **References** list with links. Only pages the agent opened on an approved site can become references; a citation of a search snippet, or of any other page, doesn't count.
 4. **Code checks** (no AI cost):
-   - 2,500–3,100 words in the body
-   - 5–7 cited pages
-   - 3 FAQs inside the article, each in a different section, and 1–5 in a final "Frequently asked questions" section
-   - a title
-   - no run of 12 or more words copied from a source
+   - 2,400–3,400 words that readers read (picture blocks don't count)
+   - 5–8 cited pages, all opened by the agent
+   - the takeaways, 5 chapters, 3 picture blocks and 2 tables in the shape above, each picture block and table in a different chapter, and never a picture right next to a table
+   - 3 FAQs inside the article, each in a different chapter, and 1–5 in a final "Frequently asked questions" section that repeat none of them; every answer 1–3 sentences
+   - links only to URLs listed in an active rule (the Tvarvi pages), and ₹ prices only as the brief gives them
+   - no `[SOURCE NEEDED]` or other `[...]` placeholders, a title, and no run of 12 or more words copied from a source
 
-   If a check fails, the agent gets the exact problems and rewrites the article.
+   If a check fails, the agent gets the exact problems and rewrites the article. Em dashes and double hyphens are simply replaced with commas, with no rewrite and no cost; the same happens to every article a person submits or edits, so no article contains one.
 5. **Compliance agent.** It checks medical compliance (the compliance rules and the approved regulator pages) and compares every cited claim with the passage it cites. It also flags any uncited sentence that states a fact. The agent revises, for at most 3 reviews.
 6. **A person checks it.** The draft opens in the new-article form, next to the checks, the compliance verdict, and a **Claims and sources** table that shows each claim with its passage and link. The writer edits the draft and clicks **Submit to admin**, and it goes through the normal workflow. The article's history links to this research record, and its reviewer can open it too.
 
@@ -114,6 +115,16 @@ On the dashboard, a writer types a topic or keyword under **Draft an article wit
 - with the article writer on Opus 5.5, about $1.20–1.60
 
 The social posts for the article cost extra after approval (see the cost estimates under "One-week trial on Railway").
+
+## Website article
+
+**Signing.** Reviewers are doctors, and every article they approve carries their signature. The first time a reviewer logs in, the app asks for their signing details before anything else: the name as it should appear (for example "Dr. Mehra") and their qualifications ("MBBS, PGIMS Rohtak"). They can change them under their name at the top right; articles already approved keep the details they were signed with. Approving copies the signature and the date onto the article, and the history records it. Admins see each reviewer's details on the Team page.
+
+**Final audit (advisory).** When an article is assigned to a reviewer, the app checks its exact text: the free code checks above, plus one compliance-agent review (`MODEL_COMPLIANCE`, about $0.10). The reviewer sees the result above the review form. It **never blocks approval**: the approval records what the audit said ("approved over the AI audit's issues"). It runs once per version of the text, so a second opinion on unchanged text reuses it, and an AI draft that passed its own review and was submitted unchanged isn't audited again.
+
+**Pictures.** After approval, Gemini (`GEMINI_IMAGE_MODEL`) makes one 16:9 illustration for each of the article's first 3 picture blocks, from its Description, and the picture check (`MODEL_IMAGE_CHECK`) looks for text, misleading medical content, anything the picture rules forbid, a realistic person, logos and a mismatch. A flagged picture is made again with the check's notes, up to 3 times, and the best one is kept with its notes. The website card shows the pictures to the reviewer, who can ask for a **New picture** for any one of them, then **Mark ready**. Each article can use at most 15 Gemini pictures. The pictures stay private until the article is published. Without `GEMINI_API_KEY` no pictures are made, and the picture blocks are left out of the published page. Pictures cost about $0.20–0.45 per article.
+
+**Publishing.** The website gets the article as HTML: the byline ("Written by", "Medically reviewed by" with the signature, "Last reviewed" with the approval date), the article with its pictures in place of the picture blocks, tables, links and `[n]` markers linked to their sources, then the **standard disclaimer** after the References. See [Website webhook](#website-webhook) for the payload; until it is connected, keep `website` in `DRY_RUN_CHANNELS`.
 
 ## Instagram carousels
 
@@ -177,7 +188,7 @@ Log in, open **Team**, and add writers, reviewers and publishers. Roles are chec
    - `PUBLIC_BASE_URL=https://<your-app>.up.railway.app`
    - `ANTHROPIC_API_KEY`
    - `DRY_RUN_CHANNELS=website,instagram,linkedin,x`
-   - optional, for carousels: `GEMINI_API_KEY` and `GLASS_SLIDES_URL`
+   - optional, for carousel and website pictures: `GEMINI_API_KEY`; for carousels: `GLASS_SLIDES_URL`
 4. Open the service shell and run `npm run create-admin -- you@company.com "Your Name"`.
 
 With every channel in `DRY_RUN_CHANNELS`, the team can use the whole workflow while nothing is posted: items show **Published (Simulated)**. Switch a channel to live by setting its keys and removing it from the list.
@@ -185,7 +196,8 @@ With every channel in `DRY_RUN_CHANNELS`, the team can use the whole workflow wh
 Costs during the trial:
 - **Claude API:** billed per use. Set a spend limit in the Anthropic Console. The Training page shows the measured cost per article. Estimates:
   - about **$0.30–0.50 per article** (3 posts), and about $1.00 in the worst case, with the default models. With every agent on Opus 5.5 it is $0.50–0.80.
-  - about **$0.85 for each article-agent draft** (see [Article agent](#article-agent))
+  - about **$0.85–1.00 for each article-agent draft** (see [Article agent](#article-agent))
+  - about **$0.10 for each final audit** of an article's text, and **$0.20–0.45 for its 3 website pictures** (see [Website article](#website-article))
   - about **$0.90 for each Instagram carousel**, Gemini pictures included (see [Instagram carousels](#instagram-carousels))
   - about **$0.10–0.30 for each weekly digest**, and $0 when a week is skipped
   - about 1–2 minutes from approval until the posts are ready
@@ -217,8 +229,16 @@ Content-Type: application/json
 X-Webhook-Timestamp: <unix seconds>
 X-Webhook-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>" using WEBSITE_WEBHOOK_SECRET>
 
-{"id": 12, "title": "...", "slug": "iron-and-energy-12", "html": "<h2>...</h2><p>...</p>", "published_at": "2026-09-25T10:00:00.000Z"}
+{
+  "id": 12, "title": "...", "slug": "iron-and-energy-12",
+  "html": "<p class=\"byline\">Written by: ...</p><h2>...</h2><p>...</p>...<p class=\"disclaimer\">This article is for general information ...</p>",
+  "byline": {"author": "Wen Writer", "reviewer": "Dr. Mehra, MBBS, PGIMS Rohtak", "reviewed": "28 September 2026"},
+  "pictures": [{"n": 1, "title": "...", "alt": "...", "url": "https://<PUBLIC_BASE_URL>/media/<uuid>.png"}],
+  "published_at": "2026-09-25T10:00:00.000Z"
+}
 ```
+
+The pictures are already in the HTML as `<img>` tags pointing at this app; the `pictures` list is there so the site can copy them to its own storage.
 
 The endpoint must do four things:
 - Verify the signature.
@@ -263,7 +283,8 @@ export async function POST(request) {
 | `server.js` | routes, auth, workflow rules, background jobs |
 | `admin.js` | Training, Sources and Suggestions pages |
 | `ai.js` | trend scout, writer and compliance agents; model settings and prices |
-| `article.js` | article agent: research, cited draft, code checks, compliance review |
+| `article.js` | article agent: research, cited draft, code checks, compliance review; the advisory final audit |
+| `pictures.js` | website pictures: Gemini picture per picture block, picture check, retries |
 | `carousel.js` | carousel agent: slide text, pictures and their checks, Glass Slides deck, slide upload, final text check |
 | `gemini.js` | Gemini pictures over REST |
 | `tools.js` | read-only agent tools |

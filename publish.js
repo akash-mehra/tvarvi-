@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { slugify, textToHtml } from './text.js';
+import { DISCLAIMER, esc, noEmDashes, slugify, textToHtml } from './text.js';
 
 // Trial mode: channels listed here record a simulated publish instead of calling the platform.
 const DRY_RUN = new Set(
@@ -50,13 +50,38 @@ async function call(label, url, init = {}) {
 export const webhookSignature = (secret, timestamp, body) =>
   createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
 
-async function publishWebsite(_item, article) {
+// "28 September 2026", in India's time zone.
+const longDate = (sqlTime) =>
+  new Date(`${sqlTime.replace(' ', 'T')}Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+
+// Who wrote the article and which doctor signed it off, from the approval record. Never AI-written.
+export const byline = (article) => ({
+  author: article.author,
+  reviewer: article.signature ?? null,
+  reviewed: article.signed_at ? longDate(article.signed_at) : null,
+});
+
+// The article page's HTML: byline, the article (its pictures in place of the picture blocks), then the disclaimer.
+export function websiteHtml(article, figures = []) {
+  const by = byline(article);
+  const lines = [`Written by: ${by.author}`, ...(by.reviewer ? [`Medically reviewed by: ${by.reviewer}`, `Last reviewed: ${by.reviewed}`] : [])];
+  return [
+    `<p class="byline">${lines.map(esc).join('<br>')}</p>`,
+    textToHtml(noEmDashes(article.body), { pictures: new Map(figures.map((f) => [f.n, f])) }),
+    `<p class="disclaimer">${esc(DISCLAIMER)}</p>`,
+  ].join('\n');
+}
+
+async function publishWebsite(item, article) {
   const [url, secret] = env('WEBSITE_WEBHOOK_URL', 'WEBSITE_WEBHOOK_SECRET');
+  const figures = item.figures ?? [];
   const body = JSON.stringify({
     id: article.id,
-    title: article.title,
+    title: noEmDashes(article.title),
     slug: slugify(article.title, article.id),
-    html: textToHtml(article.body),
+    html: websiteHtml(article, figures),
+    byline: byline(article),
+    pictures: figures,
     published_at: new Date().toISOString(),
   });
   const timestamp = String(Math.floor(Date.now() / 1000));

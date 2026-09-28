@@ -58,6 +58,7 @@ test('a writer drafts an article with the agent, checks it and submits it into t
   await addUser({ name: 'Otto Other', email: 'other@example.com', can_write: 1 }, PASSWORD);
   const reviewerId = await addUser({ name: 'Rae Reviewer', email: 'reviewer@example.com', can_review: 1 }, PASSWORD);
   await addUser({ name: 'Pia Plain', email: 'plain@example.com' }, PASSWORD);
+  run(`UPDATE users SET sign_name = 'Dr. Rae', sign_credentials = 'MBBS' WHERE can_review = 1`);
   const [admin, writer, other, reviewer, plain] = await Promise.all(['admin', 'writer', 'other', 'reviewer', 'plain'].map((r) => login(`${r}@example.com`)));
 
   await t.test('drafting needs Research sites, which only admins add', async () => {
@@ -148,6 +149,27 @@ test('a writer drafts an article with the agent, checks it and submits it into t
     assert.equal((await finished(Number(retry.headers.get('location').split('/').pop()))).status, 'ready');
   });
 
+  await t.test('a ready draft submitted unchanged is not audited again when assigned', async () => {
+    const ready = one(`SELECT id, title, body FROM drafts WHERE status = 'ready' ORDER BY id DESC LIMIT 1`);
+    const res = await post(writer, '/articles', { title: ready.title, body: ready.body, draft_id: ready.id });
+    const id = Number(res.headers.get('location').split('/').pop());
+    const audits = () => one(`SELECT COUNT(*) AS n FROM ai_calls WHERE agent = 'Final audit'`).n;
+    const before = audits();
+    assert.equal((await post(admin, `/articles/${id}`, { action: 'assign', reviewer_id: reviewerId })).status, 303);
+    assert.deepEqual({ ...one('SELECT audit_status, audit_notes FROM articles WHERE id = ?', id) },
+      { audit_status: 'ready', audit_notes: 'The AI draft passed the code checks and the compliance review, and was submitted unchanged.' });
+    assert.equal(audits(), before);
+  });
+
+  await t.test('rules for the website article reach the article agent only', async () => {
+    assert.equal((await post(admin, '/knowledge', { kind: 'brand_rule', platform: 'website', text: 'Exactly five chapters.' })).status, 303);
+    assert.equal((await post(admin, '/knowledge', { kind: 'example', platform: 'website', text: 'An example.' })).status, 400);
+    const { activeRules } = await import('../knowledge.js');
+    assert.ok(activeRules('website').some((r) => r.text === 'Exactly five chapters.'));
+    assert.ok(!activeRules('instagram').some((r) => r.text === 'Exactly five chapters.'));
+    assert.match(await page(admin, '/training'), /Exactly five chapters\.[\s\S]*?Website article/);
+  });
+
   await t.test('one draft at a time per writer', async () => {
     script = () => new Promise(() => {}); // never finishes
     assert.equal((await post(writer, '/drafts', { topic: 'iron and travel' })).status, 303);
@@ -160,7 +182,9 @@ test('a writer drafts an article with the agent, checks it and submits it into t
     assert.match(html, /<td>Article agent<\/td><td>claude-opus-5-5<\/td>/);
     assert.match(html, /<td>Article agent<\/td><td>claude-sonnet-5<\/td>/);
     assert.match(html, /Article agent: \$\d+\.\d\d and \d+ min per draft on average, over \d+ drafts/);
-    assert.doesNotMatch(html, /Average cost per article/, 'drafts are not counted as social-post cost');
+    // Per article: only the final audit (one Opus 5.5 call, 1,000 in and 500 out: $0.014); the drafts' calls don't count.
+    assert.match(html, /<td>Final audit<\/td><td>claude-opus-5-5<\/td><td>1<\/td>/);
+    assert.match(html, /Average cost per article: \$0\.01 over 1 article/);
   });
 
 });
