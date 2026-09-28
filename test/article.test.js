@@ -187,7 +187,7 @@ test('code checks: copied passages, FAQ placement, unanswered FAQs and word coun
 
 test('code checks: the house shape, FAQ answers, links, prices and placeholders', () => {
   const body = a.splitArticle(article().map((b) => b.text).join('').replace(/^[\s\S]*?(?=# )/, '')).body;
-  const opts = { links: 'Gynaecologist: https://www.tvarvi.com/gynaecologist', brief: 'Starter check: ₹1,499' };
+  const opts = { brief: 'Starter check: ₹1,499' };
   const failed = (text) => a.textChecks(text, opts).checks.filter((c) => !c.ok).map((c) => c.label);
   assert.deepEqual(failed(body), []);
 
@@ -201,9 +201,12 @@ test('code checks: the house shape, FAQ answers, links, prices and placeholders'
   assert.deepEqual(failed(body.replace('## Part 5', `${chapter2.replace(/### Q[^\n]*\n[^\n]*|Image 2[^\n]*\n[^\n]*\n[^\n]*/g, '')}## Part 5`)), ['Chapters']);
   assert.deepEqual(failed(body.replace('It explains one practical step you can take.', 'One. Two. Three. Four.')), ['FAQ answers']);
   assert.deepEqual(failed(body.replace('Common question 1?', 'What does part 2 mean for me?')), ['FAQs at the end']);
-  assert.deepEqual(failed(body.replace('A short, clear answer.', 'See [our gynaecologists](https://www.tvarvi.com/gynaecologist). The starter check costs ₹1,499.')), []);
+  assert.deepEqual(failed(body.replace('A short, clear answer.', 'You can book a consultation with Tvarvi. The starter check costs ₹1,499.')), []);
   assert.deepEqual(failed(body.replace('A short, clear answer.', 'See [others](https://rival.example/pcos) for ₹999.')), ['Links', 'Prices']);
-  assert.deepEqual(failed(body.replace('A short, clear answer.', 'See [us](https://www.tvarvi.com/gyn).')), ['Links'], 'only whole listed URLs, not a part of one');
+  // No links at all, not even to Tvarvi: the website adds its own navigation and booking buttons.
+  for (const link of ['[book here](https://www.tvarvi.com/gynaecologist)', '[book](/booking)', 'www.tvarvi.com', 'https://www.tvarvi.com/']) {
+    assert.deepEqual(failed(body.replace('A short, clear answer.', `See ${link} today.`)), ['Links'], link);
+  }
   assert.deepEqual(failed(body.replace('A short, clear answer.', 'About 1 in 5 women [SOURCE NEEDED: prevalence].')), ['Placeholders']);
   assert.match(a.textChecks(body.replace('Table 1:', 'Tables 1:'), opts).problems.join('\n'), /Write exactly 2 tables[\s\S]*found 1, and 1 malformed/);
 });
