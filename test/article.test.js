@@ -69,9 +69,10 @@ test('research, code checks, compliance feedback, then a draft with references b
   assert.equal(writerCalls.length, 3);
   const [search, fetch] = writerCalls[0].tools;
   assert.equal(writerCalls[0].model, 'claude-sonnet-5');
-  assert.deepEqual([search.type, search.allowed_domains, search.allowed_callers, search.max_uses], ['web_search_20260209', ['nih.gov', 'www.nhs.uk'], ['direct'], 4]);
-  assert.deepEqual([fetch.type, fetch.allowed_domains, fetch.allowed_callers, fetch.citations, fetch.max_content_tokens],
-    ['web_fetch_20260209', ['nih.gov', 'www.nhs.uk'], ['direct'], { enabled: true }, 6000]);
+  assert.deepEqual([search.type, search.allowed_domains, search.allowed_callers, search.max_uses], ['web_search_20260209', ['nih.gov', 'www.nhs.uk'], ['direct'], 3]);
+  assert.deepEqual([fetch.type, fetch.allowed_domains, fetch.allowed_callers, fetch.citations, fetch.max_uses, fetch.max_content_tokens],
+    ['web_fetch_20260209', ['nih.gov', 'www.nhs.uk'], ['direct'], { enabled: true }, 6, 4000]);
+  assert.match(writerCalls[0].system, /You can run 3 searches and open 6 pages, and you cannot research again later/);
   assert.match(writerCalls[0].messages[0].content, /<topic>iron and energy<\/topic>[\s\S]*https:\/\/nih\.gov\/\nhttps:\/\/www\.nhs\.uk\//);
   assert.match(writerCalls[0].system, /Disclaimer: Say it is general information/);
   assert.deepEqual(writerCalls[1].tools, writerCalls[0].tools, 'identical tools on every request keep the cache');
@@ -116,7 +117,7 @@ test('research, code checks, compliance feedback, then a draft with references b
   }
 });
 
-test('a paused turn is resent unchanged, and a long research run makes rewrites work offline', async () => {
+test('a paused research turn is resent unchanged, and rewrites never search or open pages', async () => {
   writerCalls.length = 0;
   const [first, ...rest] = research();
   writerScript = [
@@ -130,18 +131,37 @@ test('a paused turn is resent unchanged, and a long research run makes rewrites 
   assert.equal(writerCalls[1].messages.length, writerCalls[0].messages.length + 1, 'no extra user message after a pause');
   assert.equal(writerCalls[1].messages.at(-1).role, 'assistant');
   assert.equal(writerCalls[1].tool_choice, undefined);
-  assert.deepEqual(writerCalls[2].tool_choice, { type: 'none' }, '12 pages opened: rewrites can no longer use the web tools');
+  assert.deepEqual(writerCalls[2].tool_choice, { type: 'none' }, 'a rewrite works from the pages already opened');
+  assert.deepEqual(writerCalls[2].tools, writerCalls[0].tools, 'the tools stay listed, so the cached prefix is reused');
   assert.match(writerCalls[2].messages.at(-1).content, /without searching or opening more/);
 });
 
-test('three compliance rejections leave the draft needing attention, with the open issues', async () => {
-  writerScript = [() => reply([...research(), ...article()]), () => reply(article()), () => reply(article())];
-  verdicts = ['One', 'Two', 'Three'].map((n) => ({ approved: false, issues: [`Issue ${n}`] }));
+test('two compliance rejections leave the draft needing attention, with the open issues', async () => {
+  writerScript = [() => reply([...research(), ...article()]), () => reply(article())];
+  verdicts = ['One', 'Two'].map((n) => ({ approved: false, issues: [`Issue ${n}`] }));
   const d = await draft('iron and sport');
   assert.equal(d.status, 'needs_attention');
-  assert.equal(d.rounds, 3);
-  assert.equal(d.notes, 'Needs attention. Unresolved after 3 compliance reviews:\n- Issue Three');
+  assert.equal(d.rounds, 2);
+  assert.equal(d.notes, 'Needs attention. Unresolved after 2 compliance reviews:\n- Issue Two');
   assert.match(d.body, /## References/);
+});
+
+test('a draft starts no new AI call once it has cost $1.50, and hands over its latest version', async () => {
+  writerCalls.length = reviewCalls.length = 0;
+  // 800,000 input tokens on Sonnet 5 cost $1.60.
+  writerScript = [() => reply([...research(), ...article({ words: 2000 })], 'end_turn', { input_tokens: 800_000 })];
+  verdicts = [];
+  let d = await draft('iron and budgets');
+  assert.deepEqual([writerCalls.length, reviewCalls.length], [1, 0], 'no rewrite after the limit');
+  assert.equal(d.status, 'needs_attention');
+  assert.match(d.notes, /^Needs attention\. Stopped at the \$1\.50 spending limit:\n- The article has [\d,]+ words/);
+  assert.match(d.body, /## References/);
+
+  writerCalls.length = 0;
+  writerScript = [() => reply([...research(), ...article()], 'end_turn', { input_tokens: 800_000 })];
+  d = await draft('iron and limits');
+  assert.deepEqual([writerCalls.length, reviewCalls.length], [1, 0], 'no compliance review after the limit');
+  assert.equal(d.notes, 'Needs attention. It passed the code checks, but the $1.50 spending limit was reached before its compliance review.');
 });
 
 test('an API error or a refusal fails the draft with a readable message', async () => {

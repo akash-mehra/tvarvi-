@@ -103,7 +103,7 @@ It records **observations**, each with word-for-word evidence quotes and links t
 
 On the dashboard, a writer types a topic or keyword under **Draft an article with AI**, and optionally a **brief** (up to 2,000 characters): the coined concept, the reader's worry, prices, which Tvarvi services to mention, tags, anything else to follow. The agent then works in the background, and the draft page shows its progress live:
 
-1. **Research.** It searches and opens pages on the **Research sites** only (Claude's web search and web fetch, restricted to those domains). It may use facts only from pages it actually opened.
+1. **Research, once.** It searches and opens pages on the **Research sites** only (Claude's web search and web fetch, restricted to those domains). It may use facts only from pages it actually opened. Rewrites work from these pages and never search again, because every page opened is re-sent with each later call.
 2. **Writing.** It writes 2,400–3,400 words in its own words, following the brief and the active brand and compliance rules, in a fixed shape: the title, **Tvarvi Key Takeaways** (3 headings with 3 points each), exactly **5 chapters**, **3 picture blocks** (`Image 1:` title, `Description:` picture prompt, `Alt text:`), **2 tables** (`Table 1:` title, a Markdown table, `Source:`), 3 FAQs inside the chapters and 1–5 at the end. Every sentence that states a fact, figure, risk, benefit or recommendation carries a citation of the exact passage it comes from. It writes no disclaimer or byline: the app adds those.
 3. **References.** The app, not the model, turns the citations into `[n]` markers and a numbered **References** list with links. Only pages the agent opened on an approved site can become references; a citation of a search snippet, or of any other page, doesn't count.
 4. **Code checks** (no AI cost):
@@ -114,21 +114,18 @@ On the dashboard, a writer types a topic or keyword under **Draft an article wit
    - no links or URLs at all (the website adds its own navigation and booking buttons), and ₹ prices only as the brief gives them
    - no `[SOURCE NEEDED]` or other `[...]` placeholders, a title, and no run of 12 or more words copied from a source
 
-   If a check fails, the agent gets the exact problems and rewrites the article. Em dashes and double hyphens are simply replaced with commas, with no rewrite and no cost; the same happens to every article a person submits or edits, so no article contains one.
-5. **Compliance agent.** It checks medical compliance (the compliance rules and the approved regulator pages) and compares every cited claim with the passage it cites. It also flags any uncited sentence that states a fact. The agent revises, for at most 3 reviews.
+   If a check fails, the agent gets the exact problems and rewrites the article from the pages it already opened. Em dashes and double hyphens are simply replaced with commas, with no rewrite and no cost; the same happens to every article a person submits or edits, so no article contains one.
+5. **Compliance agent.** It checks medical compliance (the compliance rules and the approved regulator pages) and compares every cited claim with the passage it cites. It also flags any uncited sentence that states a fact. The agent revises, for at most 2 reviews.
 6. **A person checks it.** The draft opens in the new-article form, next to the checks, the compliance verdict, and a **Claims and sources** table that shows each claim with its passage and link. The writer edits the draft and clicks **Submit to admin**, and it goes through the normal workflow. The article's history links to this research record, and its reviewer can open it too.
 
 **Limits:**
-- 5 versions and 3 compliance reviews per draft.
-- 4 searches and 8 pages per request; after 12 pages or 6 searches, rewrites can't search or open more.
+- 3 versions (the researched first version and at most 2 rewrites) and 2 compliance reviews per draft.
+- 3 searches and 6 pages of up to 4,000 tokens per research request, and at most 2 research requests (a paused turn is continued once).
+- **Spending limit:** once a draft's AI calls have cost **$1.50**, it starts no new call. The latest version goes to the writer as **Needs attention**, with what is still open. The call already running when the limit is reached still finishes, so a draft can end a little above $1.50.
 - One running draft per writer.
 - A draft interrupted by a restart is marked failed, with a **Try again** button.
 
-**Cost and time per draft** (estimates with the default models; the draft page and the Training page show the measured numbers):
-- about **$0.85** and **6–9 minutes** typically
-- about $0.55 and 4 minutes when the first version passes
-- about $1.40 and 15 minutes in the worst realistic case
-- with the article writer on Opus 5.5, about $1.20–1.60
+**Cost per draft:** the draft page and the Training page show the measured cost. The spending limit caps each draft at about $1.50. Before these limits, one draft measured $5.62: its 5 writer calls processed about 590,000 tokens each.
 
 The social posts for the article cost extra after approval (see the cost estimates under "One-week trial on Railway").
 

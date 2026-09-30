@@ -29,14 +29,13 @@ export const LIMITS = {
   answerSentences: 3, // per FAQ answer
   brief: 2000,
   copiedWords: 12, // this many words in a row from an opened page count as copied
-  versions: 5, // article versions written per draft
-  reviews: 3, // compliance reviews per draft
-  researchPauses: 2, // pause_turn continuations while researching
-  rewritePauses: 1, // and per rewrite
-  pages: 12, // once this many pages were opened, or
-  searches: 6, // this many searches were run, rewrites can't use the web tools
+  versions: 3, // article versions written per draft: the researched first version and at most 2 rewrites
+  reviews: 2, // compliance reviews per draft
+  researchPauses: 1, // pause_turn continuations while researching
+  spend: 1.5, // USD: once a draft's AI calls have cost this much, it starts no new call
 };
-const WEB = { searches: 4, fetches: 8, pageTokens: 6000 }; // per request
+// Per research request. Every search result and page stays in the conversation that each later call re-sends.
+const WEB = { searches: 3, fetches: 6, pageTokens: 4000 };
 const MAX_LOG = 20_000;
 
 const WRITER = `You research and write long-form health articles for a medical publisher's website.
@@ -44,6 +43,7 @@ const WRITER = `You research and write long-form health articles for a medical p
 Research
 - Use web_search and web_fetch. They reach only our approved medical sites.
 - Open (web_fetch) every page you rely on, and use facts only from pages you opened: never from memory or from search snippets alone.
+- You can run ${WEB.searches} searches and open ${WEB.fetches} pages, and you cannot research again later: choose the pages most likely to support the whole article.
 - Finish your research before you start writing.
 
 Writing
@@ -116,11 +116,11 @@ const briefBlock = (brief) => (brief ? `\n\n<brief>\n${neutralize(brief)}\n</bri
 const startMessage = (topic, brief, sources) =>
   `<topic>${neutralize(topic)}</topic>${briefBlock(brief)}\n\nOur approved research sites (search and open only these):\n${sources.map((s) => s.url).join('\n')}\n\nResearch the topic, then write the article.`;
 
-const rewriteMessage = ({ kind, issues }, offline) =>
+const rewriteMessage = ({ kind, issues }) =>
   `${kind === 'checks' ? 'The draft does not meet these requirements yet:' : 'The medical compliance reviewer found these issues:'}
 - ${issues.join('\n- ')}
 
-${offline ? 'You have opened enough pages: work with those, without searching or opening more. ' : ''}Rewrite the complete article so every point above is fixed, keeping every factual sentence cited. Reply with the article only.`;
+Work with the pages you opened, without searching or opening more. Rewrite the complete article so every point above is fixed, keeping every factual sentence cited. Reply with the article only.`;
 
 // ---------- pure helpers (exported for tests) ----------
 
@@ -480,22 +480,21 @@ function progress(id) {
   };
 }
 
-// One version from the writer. A paused turn is resent as is; returns null if it is still paused after `pauses` resends.
-async function writeVersion(ctx, pauses) {
+// One version from the writer. Only the first researches; a rewrite can't use the web tools, which stay listed so
+// the cached prefix stays the same. A paused research turn is resent as is; returns null if it is still paused after that.
+async function writeVersion(ctx, { research }) {
   const blocks = [];
-  for (let resend = 0; resend <= pauses; resend++) {
+  for (let resend = 0; resend <= (research ? LIMITS.researchPauses : 0); resend++) {
     const res = await callClaude('Article writer', null, {
       model: MODEL.article,
       system: ctx.system,
       messages: ctx.messages,
       tools: ctx.tools,
-      ...(ctx.offline ? { tool_choice: { type: 'none' } } : {}),
+      ...(research ? {} : { tool_choice: { type: 'none' } }),
       cache_control: { type: 'ephemeral' },
     }, { draftId: ctx.id, stream: true, onBlock: ctx.onBlock });
     ctx.messages.push({ role: 'assistant', content: res.content });
     blocks.push(...res.content);
-    ctx.searches += res.usage?.server_tool_use?.web_search_requests ?? 0;
-    ctx.fetches += res.usage?.server_tool_use?.web_fetch_requests ?? 0;
     if (res.stop_reason !== 'pause_turn') return blocks;
   }
   return null;
@@ -539,7 +538,8 @@ function finish(id, draft, status, notes, rounds, inputs) {
   if (changes) appendLog(id, status === 'ready' ? 'Done: ready for you to check' : 'Done: needs attention');
 }
 
-// Research → write → code checks → compliance review, with feedback, until approved or out of versions/reviews.
+// Research → write → code checks → compliance review, with feedback, until approved, out of versions or reviews, or at
+// the spending limit.
 export async function runDraft(id) {
   try {
     const { topic, brief } = one('SELECT topic, brief FROM drafts WHERE id = ?', id);
@@ -556,22 +556,24 @@ export async function runDraft(id) {
       messages: [{ role: 'user', content: startMessage(topic, brief, sources) }],
       complianceRules: rules.filter((r) => r.kind === 'compliance_rule'),
       snapshots: approvedSnapshots(),
-      offline: false,
-      searches: 0,
-      fetches: 0,
       onBlock: progress(id),
     };
     let latest = null;
     let feedback = null;
     let reviews = 0;
     let reason = `Not fixed within ${LIMITS.versions} versions`;
+    const limit = `the $${LIMITS.spend.toFixed(2)} spending limit`;
+    const overBudget = () => draftCost(id) >= LIMITS.spend;
     for (let version = 1; version <= LIMITS.versions; version++) {
       if (feedback) {
-        ctx.offline = ctx.fetches >= LIMITS.pages || ctx.searches >= LIMITS.searches;
-        ctx.messages.push({ role: 'user', content: rewriteMessage(feedback, ctx.offline) });
+        if (overBudget()) {
+          reason = `Stopped at ${limit}`;
+          break;
+        }
+        ctx.messages.push({ role: 'user', content: rewriteMessage(feedback) });
       }
       appendLog(id, version === 1 ? 'Researching and writing version 1' : `Writing version ${version}`);
-      const blocks = await writeVersion(ctx, version === 1 ? LIMITS.researchPauses : LIMITS.rewritePauses);
+      const blocks = await writeVersion(ctx, { research: version === 1 });
       if (!blocks) {
         reason = 'The writer did not finish a version in time';
         break;
@@ -592,6 +594,11 @@ export async function runDraft(id) {
         appendLog(id, `Checks: ${checks.filter((c) => !c.ok).map((c) => c.label).join(', ')} not met`);
         continue;
       }
+      if (overBudget()) {
+        reason = `It passed the code checks, but ${limit} was reached before its compliance review`;
+        feedback = null;
+        break;
+      }
       reviews++;
       appendLog(id, `Checks passed. Compliance review ${reviews}`);
       const verdict = await review(ctx, current);
@@ -607,7 +614,8 @@ export async function runDraft(id) {
       }
     }
     if (!latest) throw new Error('The article agent did not produce an article. Click Try again.');
-    finish(id, latest, 'needs_attention', `Needs attention. ${reason}:\n- ${(feedback?.issues ?? ['No details.']).join('\n- ')}`, reviews, inputs);
+    const issues = feedback?.issues ?? [];
+    finish(id, latest, 'needs_attention', `Needs attention. ${reason}${issues.length ? `:\n- ${issues.join('\n- ')}` : '.'}`, reviews, inputs);
   } catch (err) {
     console.error(`Article draft ${id} failed:`, err);
     const message = describe(err);
@@ -634,6 +642,13 @@ export function startDraft(rawTopic, userId, rawBrief = '') {
   return id;
 }
 
+// A draft's AI calls per model, and what they have cost so far at each model's price.
+const draftUsage = (id) => all(
+  `SELECT model, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cache_read,
+     SUM(cache_write) AS cache_write, SUM(web_searches) AS searches, SUM(web_fetches) AS fetches
+   FROM ai_calls WHERE draft_id = ? GROUP BY model`, id);
+const draftCost = (id) => draftUsage(id).reduce((sum, u) => sum + (callCost(u) ?? 0), 0);
+
 // A draft with its JSON fields parsed, and its measured cost (at each model's price) and time.
 export function getDraft(id) {
   const draft = one(
@@ -648,10 +663,7 @@ export function getDraft(id) {
       return [];
     }
   };
-  const usage = all(
-    `SELECT model, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cache_read,
-       SUM(cache_write) AS cache_write, SUM(web_searches) AS searches, SUM(web_fetches) AS fetches
-     FROM ai_calls WHERE draft_id = ? GROUP BY model`, id);
+  const usage = draftUsage(id);
   const costs = usage.map(callCost);
   return {
     ...draft,
