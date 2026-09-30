@@ -150,7 +150,7 @@ test('an approved article gets its 3 Gemini pictures, the doctor’s byline and 
     assert.equal(prompts.length, 5);
     assert.equal(after[0].file, before[0].file);
     assert.notEqual(after[1].file, before[1].file);
-    assert.ok(!existsSync(join(UPLOADS, before[1].file)), 'the replaced picture is deleted');
+    await until(() => !existsSync(join(UPLOADS, before[1].file))); // the replaced picture is deleted once the new one is saved
   });
 
   await t.test('publishing sends the byline, the pictures under public names and the disclaimer to the website', async () => {

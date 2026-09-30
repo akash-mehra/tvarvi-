@@ -1,7 +1,7 @@
 // Admin pages: agent training (versioned rules and examples), web sources, weekly suggestions.
 import { callCost, MODEL } from './ai.js';
 import { articlesForItems, CoachError, decideSuggestion, isDigestRunning, listDigests, listSuggestions, observationsForDigest, runDigest } from './coach.js';
-import { all, one } from './db.js';
+import { all, audit, one, run, tx } from './db.js';
 import { count, fail, field, oneOf, readForm, redirect, send, toId } from './http.js';
 import {
   createEntry, editEntry, entryHistory, getEntry, KINDS, listEntries, postsUsingVersion, rollbackEntry, setActive,
@@ -197,4 +197,73 @@ export async function suggestionAction({ req, res, user, params: [id] }) {
     throw err;
   }
   redirect(res, '/suggestions');
+}
+
+// ---------- deleting (admins only, after typing "delete") ----------
+
+// A post, draft or suggestion that used any version of the entry (or any snapshot of the source) keeps its record,
+// so such entries can only be deactivated.
+const VERSIONS = 'SELECT id FROM knowledge_versions WHERE knowledge_id = ?';
+const SNAPSHOTS = 'SELECT id FROM snapshots WHERE source_id = ?';
+const uses = (kinds, ids, fk, id) =>
+  one(
+    `SELECT (SELECT COUNT(*) FROM item_inputs WHERE kind IN (${kinds}) AND ref_id IN (${ids}))
+          + (SELECT COUNT(*) FROM drafts, json_each(drafts.inputs) j
+             WHERE json_extract(j.value, '$.kind') IN (${kinds}) AND json_extract(j.value, '$.ref') IN (${ids}))
+          + (SELECT COUNT(*) FROM suggestions WHERE ${fk} IN (${ids})) AS n`,
+    id, id, id,
+  ).n;
+const knowledgeUses = (id) => uses(`'rule', 'example'`, VERSIONS, 'knowledge_version_id', id);
+const sourceUses = (id) => uses(`'snapshot'`, SNAPSHOTS, 'snapshot_id', id);
+
+const typedDelete = (form) =>
+  String(form.get('confirm') ?? '').trim() === 'delete' || fail(400, 'Type delete in the box to confirm.');
+
+function knowledgeToDelete(id) {
+  const entry = getEntry(Number(id)) ?? fail(404, 'Not found.');
+  const versions = one('SELECT COUNT(*) AS n FROM knowledge_versions WHERE knowledge_id = ?', entry.id).n;
+  return { entry, versions, used: knowledgeUses(entry.id) };
+}
+
+export function deleteKnowledgePage({ res, user, params: [id] }) {
+  requireAdmin(user);
+  send(res, view.deleteKnowledgePage(user, knowledgeToDelete(id)));
+}
+
+export async function deleteKnowledge({ req, res, user, params: [id] }) {
+  requireAdmin(user);
+  typedDelete(await readForm(req));
+  tx(() => {
+    const { entry, versions, used } = knowledgeToDelete(id);
+    if (used) fail(409, 'Posts or drafts used this entry, so it stays in their record. Deactivate it instead.');
+    run('DELETE FROM knowledge_versions WHERE knowledge_id = ?', entry.id);
+    run('DELETE FROM knowledge WHERE id = ?', entry.id);
+    audit(user.id, 'knowledge_deleted',
+      `${KINDS[entry.kind]} #${entry.id}${entry.title ? ` "${entry.title}"` : ''} (${entry.platform ?? 'all platforms'}), ${versions} version${versions === 1 ? '' : 's'}: ${entry.text.slice(0, 200)}`);
+  });
+  redirect(res, '/training');
+}
+
+function sourceToDelete(id) {
+  const source = one('SELECT * FROM sources WHERE id = ?', Number(id)) ?? fail(404, 'Source not found.');
+  const snapshots = one('SELECT COUNT(*) AS n FROM snapshots WHERE source_id = ?', source.id).n;
+  return { source, snapshots, used: sourceUses(source.id) };
+}
+
+export function deleteSourcePage({ res, user, params: [id] }) {
+  requireAdmin(user);
+  send(res, view.deleteSourcePage(user, sourceToDelete(id)));
+}
+
+export async function deleteSource({ req, res, user, params: [id] }) {
+  requireAdmin(user);
+  typedDelete(await readForm(req));
+  tx(() => {
+    const { source, snapshots, used } = sourceToDelete(id);
+    if (used) fail(409, 'Posts or drafts were checked against this page, so it stays in their record. Deactivate it instead.');
+    run('DELETE FROM snapshots WHERE source_id = ?', source.id);
+    run('DELETE FROM sources WHERE id = ?', source.id);
+    audit(user.id, 'source_deleted', `${source.kind}: ${source.url}, with ${snapshots} saved version${snapshots === 1 ? '' : 's'}`);
+  });
+  redirect(res, '/sources');
 }
