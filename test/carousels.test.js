@@ -110,9 +110,10 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
   await t.test('carousels are off by default; only the assigned reviewer turns one on, and only for Instagram', async () => {
     assert.equal(one('SELECT COUNT(*) AS n FROM carousels').n, 0, 'approving the article makes no carousel');
     assert.ok(!seen.includes('carousel writer') && !briefs.length, 'and spends nothing on one');
-    assert.match(await page(reviewer, '/articles/1'),
-      new RegExp(`<form method="post" action="/items/${ig}/carousel" class="toggle">\\s*<button class="switch" name="carousel" value="on" aria-pressed="false">`));
-    assert.doesNotMatch(await page(writer, '/articles/1'), /class="switch"/, 'only the reviewer sees the toggle');
+    // The toggle lives on the Instagram post's own page, as a switch row.
+    assert.match(await page(reviewer, `/items/${ig}`),
+      new RegExp(`<form method="post" action="/items/${ig}/carousel">\\s*<ul class="list"><li><button class="row toggle" name="carousel" value="on" aria-pressed="false">`));
+    assert.doesNotMatch(await page(writer, `/items/${ig}`), /class="row toggle"/, 'only the reviewer sees the toggle');
     assert.equal((await post(writer, `/items/${ig}/carousel`, { carousel: 'on' })).status, 403);
     assert.equal((await post(reviewer, `/items/${item('linkedin').id}/carousel`, { carousel: 'on' })).status, 400);
     assert.equal((await post(reviewer, `/items/${ig}/carousel`, { carousel: 'on' }, {})).status, 403, 'cross-site');
@@ -124,7 +125,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
     await settled();
     assert.equal(carousel().status, 'ready', carousel().error);
     assert.equal(briefs.length, 5);
-    assert.match(await page(reviewer, '/articles/1'), /<button class="switch" name="carousel" value="off" aria-pressed="true">/);
+    assert.match(await page(reviewer, `/items/${ig}`), /<button class="row toggle" name="carousel" value="off" aria-pressed="true">/);
     assert.match(await page(reviewer, '/articles/1'), /Rae Reviewer turned on the Instagram carousel/);
 
     // Turning it on again makes nothing new.
@@ -138,10 +139,11 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
     assert.match(res.headers.get('content-security-policy'), /form-action 'self' https:\/\/glass\.example;/);
     const html = await res.text();
     assert.equal((html.match(/<img src="\/carousels\/1\/pictures\/pic-[0-9a-f-]{36}\.png"/g) ?? []).length, 5);
-    assert.match(html, /<form method="post" action="\/carousels\/1\/link" target="_blank"><button>Open in Glass Slides<\/button><\/form>/);
+    assert.match(html, /<form method="post" action="\/carousels\/1\/link" target="_blank"><button class="btn wide">Open in Glass Slides<\/button><\/form>/);
     assert.match(html, /href="\/carousels\/1\/deck\.json"/);
     assert.match(html, /name="heading_4" value="Point 4: iron and your day"/);
-    assert.match(await page(reviewer, '/articles/1'), /<a href="\/carousels\/1">Carousel of 5 slides<\/a>/);
+    assert.match(await page(reviewer, `/items/${ig}`), /<a class="row" href="\/carousels\/1">[\s\S]*?Carousel of 5 slides/);
+    assert.match(await page(reviewer, '/articles/1'), new RegExp(`href="/items/${ig}"[\\s\\S]*?Carousel of 5 slides`), 'the article lists it');
     assert.match(await page(writer, '/carousels/1'), /Instagram carousel/, 'the author can look');
     assert.doesNotMatch(await page(writer, '/carousels/1'), /Save and check/, '…but not change it');
     assert.equal((await request(other, '/carousels/1')).status, 403);
@@ -237,7 +239,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
   });
 
   await t.test('Mark ready needs every checklist box, and the ticks go into the history', async () => {
-    const html = await page(reviewer, '/articles/1');
+    const html = await page(reviewer, `/items/${ig}`);
     assert.equal((html.match(/<input type="checkbox" name="check_/g) ?? []).length, CAROUSEL_CHECKLIST.length);
     assert.equal((html.match(/<img src="\/media\/[0-9a-f-]{36}\.jpg" alt="Finished slide/g) ?? []).length, 5);
 
@@ -264,7 +266,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
       assert.equal((await post(reviewer, `/items/${item(channel).id}`, { action: 'ready', body: item(channel).body })).status, 303);
     }
     assert.equal(one('SELECT status FROM articles WHERE id = 1').status, 'awaiting_publisher');
-    assert.match(await page(publisher, '/articles/1'), /Publish to Instagram \(simulated\)/);
+    assert.match(await page(publisher, `/items/${ig}`), /Publish to Instagram \(simulated\)/);
     assert.equal((await post(publisher, `/items/${ig}`, { action: 'publish' })).status, 303);
     assert.deepEqual({ ...one('SELECT status, simulated FROM items WHERE id = ?', ig) }, { status: 'published', simulated: 1 });
     assert.equal((await post(reviewer, '/carousels/1', { action: 'restart' })).status, 409, 'nothing changes once it has moved on');
@@ -272,9 +274,9 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
 
   await t.test('the Training page counts carousels per carousel, Gemini pictures included', async () => {
     const html = await page(admin, '/training');
-    assert.match(html, /<td>Carousel agent<\/td><td>gemini-3\.1-flash-image<\/td><td>6<\/td>/);
-    assert.match(html, /<td>Carousel agent<\/td><td>claude-sonnet-5<\/td>/);
-    assert.match(html, /<td>Carousel agent<\/td><td>claude-opus-5-5<\/td>/);
+    assert.match(html, /<span class="row-title">Carousel agent<\/span>\s*<span class="row-sub"><span>gemini-3\.1-flash-image<\/span><span class="sep"><\/span><span>6 calls<\/span>/);
+    assert.match(html, /<span class="row-title">Carousel agent<\/span>\s*<span class="row-sub"><span>claude-sonnet-5<\/span>/);
+    assert.match(html, /<span class="row-title">Carousel agent<\/span>\s*<span class="row-sub"><span>claude-opus-5-5<\/span>/);
     assert.match(html, /Carousels: \$0\.\d\d and 1 min each on average \(until first ready\), over 1 carousel\./);
   });
 });
@@ -297,22 +299,22 @@ test('turning the carousel off removes it and goes back to a single image; turni
 
   // Not while it is being made: the job would keep spending on a carousel nobody sees.
   run(`UPDATE carousels SET status = 'working' WHERE id = ?`, id);
-  assert.match(await page(reviewer, '/articles/2'), /aria-pressed="true" disabled>/);
+  assert.match(await page(reviewer, `/items/${ig}`), /aria-pressed="true" disabled>/);
   assert.equal((await toggle('off')).status, 409);
   run(`UPDATE carousels SET status = 'ready' WHERE id = ?`, id);
 
-  assert.equal((await toggle('off')).headers.get('location'), '/articles/2');
+  assert.equal((await toggle('off')).headers.get('location'), `/items/${ig}`, 'back to the Instagram post');
   assert.equal(status(id), 'discarded');
-  const html = await page(reviewer, '/articles/2');
+  const html = await page(reviewer, `/items/${ig}`);
   assert.match(html, /Upload JPEG/);
-  assert.match(html, /<button class="switch" name="carousel" value="on" aria-pressed="false">/);
+  assert.match(html, /<button class="row toggle" name="carousel" value="on" aria-pressed="false">/);
   assert.equal((await request(reviewer, `/carousels/${id}/pictures/${pictures[0]}`)).status, 404, 'its pictures are gone');
-  assert.equal((await toggle('off')).headers.get('location'), '/articles/2', 'turning it off again changes nothing');
+  assert.equal((await toggle('off')).headers.get('location'), `/items/${ig}`, 'turning it off again changes nothing');
 
   assert.equal((await toggle('on')).headers.get('location'), `/carousels/${id}`, 'made again in the same place');
   await until(() => status(id) !== 'working');
   assert.equal(status(id), 'ready');
-  assert.equal((await post(reviewer, `/carousels/${id}`, { action: 'discard' })).headers.get('location'), '/articles/2', 'the carousel page can turn it off too');
+  assert.equal((await post(reviewer, `/carousels/${id}`, { action: 'discard' })).headers.get('location'), `/items/${ig}`, 'the carousel page can turn it off too');
   assert.equal(status(id), 'discarded');
   assert.deepEqual(all(`SELECT action FROM events WHERE article_id = 2 AND action LIKE 'carousel%' ORDER BY id`).map((e) => e.action),
     ['carousel', 'carousel_removed', 'carousel', 'carousel_removed']);

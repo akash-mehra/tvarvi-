@@ -135,9 +135,12 @@ test('an approved article gets its 3 Gemini pictures, the doctor’s byline and 
     assert.equal((await request(writer, `/items/${item.id}/pictures/${first.file}`)).status, 200, 'the author can see the article');
     assert.equal((await request('', `/media/${first.file}`)).status, 404);
     assert.equal((await request(doctor, `/items/${item.id}/pictures/pic-00000000-0000-0000-0000-000000000000.png`)).status, 404);
-    const html = await (await request(doctor, '/articles/1')).text();
-    assert.match(html, /medically reviewed by Dr\. Mehra, MBBS, PGIMS Rohtak/);
-    assert.match(html, /value="picture_2" class="secondary">New picture/);
+    // The website article's own page: the byline as the website shows it, and each picture with New picture.
+    const html = await (await request(doctor, `/items/${item.id}`)).text();
+    assert.match(html, /<span class="sig-label">Medically reviewed by<\/span><span class="sig-name">Dr\. Mehra, MBBS, PGIMS Rohtak<\/span>/);
+    assert.equal((html.match(/<button class="btn secondary small" name="action" value="picture_\d">/g) ?? []).length, 3);
+    assert.match(html, new RegExp(`<img src="/items/${item.id}/pictures/${first.file}" alt="A woman choosing vegetables">`), 'the preview shows the private pictures');
+    assert.match(await (await request(doctor, '/articles/1')).text(), new RegExp(`<a class="row" href="/items/${item.id}">[\\s\\S]*?3 pictures`));
   });
 
   await t.test('only the reviewer asks for a new picture, which replaces just that one', async () => {

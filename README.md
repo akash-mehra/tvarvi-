@@ -15,6 +15,20 @@ Every step is recorded in each article's history.
 
 A writer can also have the **article agent** research and draft an article from a topic (see [Article agent](#article-agent)). The draft opens in the new-article form, and a person checks and submits it into this same workflow.
 
+## Using the app
+
+The app looks and works like an iPhone app (iOS 26, Liquid Glass), because most reviewers read and sign on their phones. On a phone, add it to the Home Screen (Share, then Add to Home Screen) to open it full screen with its own icon. Its design rules are in [DESIGN.md](DESIGN.md).
+
+- **Tabs** sit at the bottom on phones and at the top on wider screens:
+  - **Home** shows what needs you.
+  - **Write** is for writers: have the article agent research and draft, or write it yourself.
+  - **Admin** is for admins: Training, Sources, Suggestions and Team. The tab shows a count while suggestions or changed compliance pages wait.
+  - **Account** holds your signing details, photo and password, and the Log out button.
+- **Reading and signing.** An article opens as plain reading text. The Read and Edit switch at the bottom opens the editor. **Approve** opens a sheet with your signature (photo, name, qualifications and date). If you changed the text, **Send** it to the admin instead.
+- **Each post has its own page**, with one main button at the bottom (Mark ready or Publish). Everything else is under "…". The Next row goes to the following post that needs you.
+- **AI at work** shows as a small animated orb, and the page refreshes by itself until the AI finishes. The orbs come from [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) (MIT licence).
+- **Settings respected:** the phone's light or dark mode, Reduce Motion (the orbs hold still), Reduce Transparency (the bars turn solid) and Increase Contrast. Everything works from the keyboard and without JavaScript; only the orbs need it.
+
 ## How the agents learn (without fine-tuning)
 
 The agents get company knowledge and approved web sources on every run, and a weekly coach proposes improvements. **Nothing changes how the agents behave until an admin approves it.**
@@ -120,7 +134,7 @@ The social posts for the article cost extra after approval (see the cost estimat
 
 ## Website article
 
-**Signing.** Reviewers are doctors, and every article they approve carries their signature. The first time a reviewer logs in, the app asks for their signing details before anything else: the name as it should appear (for example "Dr. Mehra"), their qualifications ("MBBS, PGIMS Rohtak") and a photo (JPEG or PNG, at most 2 MB). The photo's location and camera details are removed before it is saved, and it is public under a random address because the website shows it. They can change them under their name at the top right; articles already approved keep the details they were signed with. Approving copies the signature, the photo and the date onto the article, and the history records it. Admins see each reviewer's details on the Team page.
+**Signing.** Reviewers are doctors, and every article they approve carries their signature. The first time a reviewer logs in, the app asks for their signing details before anything else: the name as it should appear (for example "Dr. Mehra"), their qualifications ("MBBS, PGIMS Rohtak") and a photo (JPEG or PNG, at most 2 MB). The photo's location and camera details are removed before it is saved, and it is public under a random address because the website shows it. They can change them on the Account tab; articles already approved keep the details they were signed with. Approving copies the signature, the photo and the date onto the article, and the history records it. Admins see each reviewer's details on the Team page.
 
 **Final audit (advisory).** When an article is assigned to a reviewer, the app checks its exact text: the free code checks above, plus one compliance-agent review (`MODEL_COMPLIANCE`, about $0.10). The reviewer sees the result above the review form. It **never blocks approval**: the approval records what the audit said ("approved over the AI audit's issues"). It runs once per version of the text, so a second opinion on unchanged text reuses it, and an AI draft that passed its own review and was submitted unchanged isn't audited again.
 
@@ -270,14 +284,15 @@ export async function POST(request) {
 ## How it's built
 
 - Node built-ins only (`node:http`, `node:sqlite`, `node:crypto`, `node:zlib`, `fetch`), plus `@anthropic-ai/sdk`. Gemini is called over its REST API with `fetch`.
-- Server-rendered HTML forms with no client JavaScript.
+- Server-rendered HTML forms. The only script is `public/orbs.js`, which animates the thinking orbs; every page works without it. It is built from thinking-orbs and carries its MIT licence. Sheets use the browser's Popover API and show inline where it is missing.
 - AI uses Claude with tool use (strict schemas), structured JSON output and prompt caching, with one model per agent (see [AI models](#ai-models)). There is no agent framework.
 - Background jobs (the daily compliance check and the weekly digest) run inside the app. Set `BACKGROUND_JOBS=off` on any extra instance.
 - The database schema upgrades itself on start (`PRAGMA user_version`); v1 data is kept.
 - Security:
   - scrypt password hashing and 12-hour sessions.
   - Login lockout after 5 failures.
-  - Same-origin checks on every form post and a strict Content-Security-Policy.
+  - Same-origin checks on every form post.
+  - A strict Content-Security-Policy: only the app's own stylesheet, script and images load, and Trusted Types block string-to-code sinks.
   - Every workflow step is a guarded state change, so double clicks can't publish twice.
 
 | File | Purpose |
@@ -295,6 +310,9 @@ export async function POST(request) {
 | `coach.js` | weekly digest and suggestion decisions |
 | `publish.js` | website, Instagram, LinkedIn and X |
 | `views.js` | pages |
+| `public/style.css` | the iOS 26 design system (see [DESIGN.md](DESIGN.md)) |
+| `public/orbs.js` | the thinking orbs (MIT licence in the file) |
+| `public/icon.png` | the app icon |
 | `http.js` | request helpers |
 | `text.js` | text helpers |
 | `db.js` | schema and migrations |

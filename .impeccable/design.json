@@ -1,0 +1,381 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-30T05:44:53.310Z",
+  "title": "Design System: Tvarvi",
+  "extensions": {
+    "colorMeta": {
+      "system-blue": {
+        "role": "primary",
+        "displayName": "System Blue",
+        "canonical": "oklch(56.3% 0.193 256.2)",
+        "tonalRamp": [
+          "oklch(15% 0.193 256.2)",
+          "oklch(26% 0.193 256.2)",
+          "oklch(37% 0.193 256.2)",
+          "oklch(48% 0.193 256.2)",
+          "oklch(59% 0.193 256.2)",
+          "oklch(70% 0.193 256.2)",
+          "oklch(82% 0.193 256.2)",
+          "oklch(95% 0.03 256.2)"
+        ]
+      },
+      "night-blue": {
+        "role": "primary",
+        "displayName": "Night Blue",
+        "canonical": "oklch(66.9% 0.181 251.8)",
+        "tonalRamp": [
+          "oklch(15% 0.181 251.8)",
+          "oklch(26% 0.181 251.8)",
+          "oklch(37% 0.181 251.8)",
+          "oklch(48% 0.181 251.8)",
+          "oklch(59% 0.181 251.8)",
+          "oklch(70% 0.181 251.8)",
+          "oklch(82% 0.181 251.8)",
+          "oklch(95% 0.03 251.8)"
+        ]
+      },
+      "grouped-grey": {
+        "role": "neutral",
+        "displayName": "Grouped Grey",
+        "canonical": "oklch(96.3% 0.007 286.3)",
+        "tonalRamp": [
+          "oklch(15% 0.007 286.3)",
+          "oklch(26% 0.007 286.3)",
+          "oklch(37% 0.007 286.3)",
+          "oklch(48% 0.007 286.3)",
+          "oklch(59% 0.007 286.3)",
+          "oklch(70% 0.007 286.3)",
+          "oklch(82% 0.007 286.3)",
+          "oklch(95% 0.007 286.3)"
+        ]
+      },
+      "status-green": {
+        "role": "tertiary",
+        "displayName": "Status Green",
+        "canonical": "oklch(51.1% 0.133 148)",
+        "tonalRamp": [
+          "oklch(15% 0.133 148)",
+          "oklch(26% 0.133 148)",
+          "oklch(37% 0.133 148)",
+          "oklch(48% 0.133 148)",
+          "oklch(59% 0.133 148)",
+          "oklch(70% 0.133 148)",
+          "oklch(82% 0.133 148)",
+          "oklch(95% 0.03 148)"
+        ]
+      },
+      "status-orange": {
+        "role": "tertiary",
+        "displayName": "Status Orange",
+        "canonical": "oklch(54.7% 0.147 48.9)",
+        "tonalRamp": [
+          "oklch(15% 0.147 48.9)",
+          "oklch(26% 0.147 48.9)",
+          "oklch(37% 0.147 48.9)",
+          "oklch(48% 0.147 48.9)",
+          "oklch(59% 0.147 48.9)",
+          "oklch(70% 0.147 48.9)",
+          "oklch(82% 0.147 48.9)",
+          "oklch(95% 0.03 48.9)"
+        ]
+      },
+      "status-red": {
+        "role": "tertiary",
+        "displayName": "Status Red",
+        "canonical": "oklch(55.3% 0.225 27.3)",
+        "tonalRamp": [
+          "oklch(15% 0.225 27.3)",
+          "oklch(26% 0.225 27.3)",
+          "oklch(37% 0.225 27.3)",
+          "oklch(48% 0.225 27.3)",
+          "oklch(59% 0.225 27.3)",
+          "oklch(70% 0.225 27.3)",
+          "oklch(82% 0.225 27.3)",
+          "oklch(95% 0.03 27.3)"
+        ]
+      },
+      "status-indigo": {
+        "role": "tertiary",
+        "displayName": "Status Indigo",
+        "canonical": "oklch(48.5% 0.193 277.5)",
+        "tonalRamp": [
+          "oklch(15% 0.193 277.5)",
+          "oklch(26% 0.193 277.5)",
+          "oklch(37% 0.193 277.5)",
+          "oklch(48% 0.193 277.5)",
+          "oklch(59% 0.193 277.5)",
+          "oklch(70% 0.193 277.5)",
+          "oklch(82% 0.193 277.5)",
+          "oklch(95% 0.03 277.5)"
+        ]
+      },
+      "switch-green": {
+        "role": "tertiary",
+        "displayName": "Switch Green",
+        "canonical": "oklch(73% 0.194 147.4)",
+        "tonalRamp": [
+          "oklch(15% 0.194 147.4)",
+          "oklch(26% 0.194 147.4)",
+          "oklch(37% 0.194 147.4)",
+          "oklch(48% 0.194 147.4)",
+          "oklch(59% 0.194 147.4)",
+          "oklch(70% 0.194 147.4)",
+          "oklch(82% 0.194 147.4)",
+          "oklch(95% 0.03 147.4)"
+        ]
+      },
+      "night-cell": {
+        "role": "neutral",
+        "displayName": "Night Cell",
+        "canonical": "oklch(22.7% 0.004 286.1)",
+        "tonalRamp": [
+          "oklch(15% 0.004 286.1)",
+          "oklch(26% 0.004 286.1)",
+          "oklch(37% 0.004 286.1)",
+          "oklch(48% 0.004 286.1)",
+          "oklch(59% 0.004 286.1)",
+          "oklch(70% 0.004 286.1)",
+          "oklch(82% 0.004 286.1)",
+          "oklch(95% 0.004 286.1)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "large-title": {
+        "displayName": "Large Title",
+        "purpose": "The title of every top-level page, with the account avatar on its row."
+      },
+      "article-title": {
+        "displayName": "Article Title",
+        "purpose": "The heading of a detail page: an article, a post, a rule or a draft."
+      },
+      "reading-heading": {
+        "displayName": "Reading Heading",
+        "purpose": "Chapter headings inside an article."
+      },
+      "sheet-title": {
+        "displayName": "Sheet Title",
+        "purpose": "Centred at the top of a sheet."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Interface text; row titles at weight 500."
+      },
+      "reading-body": {
+        "displayName": "Reading Body",
+        "purpose": "Article text in Read mode, at most 68ch."
+      },
+      "lede": {
+        "displayName": "Lede",
+        "purpose": "The one-line summary under a large title."
+      },
+      "subtitle": {
+        "displayName": "Subtitle",
+        "purpose": "Row metadata, items separated by dots."
+      },
+      "section-header": {
+        "displayName": "Section Header",
+        "purpose": "The label above an inset list."
+      },
+      "badge": {
+        "displayName": "Badge",
+        "purpose": "Status capsules."
+      },
+      "tab-label": {
+        "displayName": "Tab Label",
+        "purpose": "Under each tab icon."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Text diffs and code only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "card-hairline",
+        "value": "0 1px 2px rgb(0 0 0 / 0.04)",
+        "purpose": "Inset lists and cards in light mode; none in dark mode."
+      },
+      {
+        "name": "glass-lift",
+        "value": "0 14px 32px -12px rgb(0 0 0 / 0.24), 0 2px 6px rgb(0 0 0 / 0.05)",
+        "purpose": "Tab bar, toolbar and glass buttons."
+      },
+      {
+        "name": "glass-edge",
+        "value": "inset 0 1px 0.5px rgb(255 255 255 / 0.95), inset 0 0 0 0.5px rgb(0 0 0 / 0.07)",
+        "purpose": "The specular top edge and hairline rim of every glass surface."
+      },
+      {
+        "name": "sheet",
+        "value": "0 24px 60px -12px rgb(0 0 0 / 0.35)",
+        "purpose": "A sheet over its scrim."
+      },
+      {
+        "name": "button-glow",
+        "value": "0 8px 20px -10px rgb(0 113 227 / 0.65)",
+        "purpose": "Under filled buttons; red for destructive ones."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.2, 0.9, 0.25, 1)",
+        "purpose": "Every transition: sheets, taps, tab changes."
+      },
+      {
+        "name": "sheet-rise",
+        "value": "translate 0.38s, opacity 0.25s (@starting-style)",
+        "purpose": "Sheets rise from below on phones and from 32px on wide screens."
+      },
+      {
+        "name": "press",
+        "value": "scale(0.97) buttons, scale(0.92) round buttons, 0.2s",
+        "purpose": "Tap feedback."
+      },
+      {
+        "name": "title-handoff",
+        "value": "animation-timeline: scroll(); animation-range: 40px 96px",
+        "purpose": "The bar title fades in as the large title scrolls away."
+      },
+      {
+        "name": "orbs",
+        "value": "requestAnimationFrame, one shared clock",
+        "purpose": "AI waits; paused offscreen, a still frame under Reduce Motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "320px"
+      },
+      {
+        "name": "form-sheet",
+        "value": "700px"
+      },
+      {
+        "name": "ipad-tabs",
+        "value": "1024px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The page's one primary action, in the floating toolbar or at the end of a form.",
+      "html": "<button class=\"ds-btn\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m5 12.5 4.5 4.5L19 7.5\"/></svg><span>Mark ready</span></button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 50px; padding: 0 22px; border: 0; border-radius: 999px; font: 600 17px/1.15 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: -0.015em; background: var(--tint-fill, #0071e3); color: #fff; box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.35), 0 8px 20px -10px rgb(0 113 227 / 0.65); cursor: pointer; transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.25, 1), filter 0.2s; } .ds-btn:hover { filter: brightness(1.06); } .ds-btn:active { transform: scale(0.97); filter: brightness(0.95); } .ds-btn:focus-visible { outline: 3px solid var(--tint, #0071e3); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A second, lesser action beside the primary.",
+      "html": "<button class=\"ds-btn-secondary\">Save</button>",
+      "css": ".ds-btn-secondary { min-height: 50px; padding: 0 22px; border: 0; border-radius: 999px; font: 600 17px/1.15 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: -0.015em; background: var(--fill, rgb(120 120 128 / 0.14)); color: var(--tint, #0071e3); cursor: pointer; transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.25, 1); } .ds-btn-secondary:active { transform: scale(0.97); } .ds-btn-secondary:focus-visible { outline: 3px solid var(--tint, #0071e3); outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Capsule",
+      "kind": "chip",
+      "refersTo": "status-capsule",
+      "description": "An item's state, in its status tone over a soft fill.",
+      "html": "<span class=\"ds-badge ds-badge-blue\">In review</span> <span class=\"ds-badge ds-badge-orange\">Waiting for admin</span> <span class=\"ds-badge ds-badge-green\">Published</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font: 600 12.5px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; white-space: nowrap; } .ds-badge-blue { background: rgb(0 113 227 / 0.12); color: #0071e3; } .ds-badge-orange { background: rgb(255 149 0 / 0.17); color: #b25000; } .ds-badge-green { background: rgb(52 199 89 / 0.16); color: #1d7a36; }"
+    },
+    {
+      "name": "Inset List Row",
+      "kind": "custom",
+      "refersTo": "list-row",
+      "description": "The unit of every list: title, facts, trailing chevron.",
+      "html": "<ul class=\"ds-list\"><li><a class=\"ds-row\" href=\"#\"><span class=\"ds-row-body\"><span class=\"ds-row-title\">PCOS and irregular periods</span><span class=\"ds-row-sub\"><span class=\"ds-badge-mini\">In review</span><span>Ananya Rao · Just now</span></span></span><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9.5 5.5 6.5 6.5-6.5 6.5\"/></svg></a></li></ul>",
+      "css": ".ds-list { margin: 0; padding: 0; list-style: none; background: #fff; border-radius: 24px; overflow: hidden; box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 11px 16px; color: #000; text-decoration: none; } .ds-row:hover { background: rgb(120 120 128 / 0.09); } .ds-row:active { background: rgb(120 120 128 / 0.2); } .ds-row:focus-visible { outline: 3px solid #0071e3; outline-offset: -3px; } .ds-row svg { color: rgb(60 60 67 / 0.36); } .ds-row-body { display: grid; gap: 3px; flex: 1; } .ds-row-title { font-size: 17px; font-weight: 500; letter-spacing: -0.015em; } .ds-row-sub { display: flex; gap: 10px; align-items: center; font-size: 14px; color: rgb(60 60 67 / 0.8); } .ds-badge-mini { height: 22px; padding: 0 9px; border-radius: 999px; background: rgb(0 113 227 / 0.12); color: #0071e3; font-size: 12.5px; font-weight: 600; line-height: 22px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "list-row",
+      "description": "A labelled, borderless field inside an inset list.",
+      "html": "<label class=\"ds-field\"><span>Topic or keyword</span><input placeholder=\"PCOD problem and irregular periods\"></label>",
+      "css": ".ds-field { display: grid; gap: 4px; padding: 10px 16px 11px; background: #fff; border-radius: 24px; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-field span { font-size: 13px; font-weight: 500; color: rgb(60 60 67 / 0.8); } .ds-field:focus-within span { color: #0071e3; } .ds-field input { border: 0; padding: 2px 0; font: 17px/1.35 inherit; background: transparent; outline: none; caret-color: #0071e3; } .ds-field input::placeholder { color: rgb(60 60 67 / 0.74); }"
+    },
+    {
+      "name": "Floating Tab Bar",
+      "kind": "nav",
+      "refersTo": "tab-bar",
+      "description": "The glass capsule of top-level tabs; the Admin tab carries a count while decisions wait.",
+      "html": "<nav class=\"ds-tabbar\" aria-label=\"Main\"><a class=\"ds-tab\" href=\"#\" aria-current=\"page\"><svg width=\"25\" height=\"25\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3.5 10.2 12 3.5l8.5 6.7V19a1.5 1.5 0 0 1-1.5 1.5h-4.2v-5.8H9.2v5.8H5A1.5 1.5 0 0 1 3.5 19z\"/></svg><span>Home</span></a><a class=\"ds-tab\" href=\"#\" aria-label=\"Admin, 3 waiting\"><span class=\"ds-tab-icon\"><svg width=\"25\" height=\"25\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M4 7h10M18 7h2M4 17h2M10 17h10\"/><circle cx=\"16\" cy=\"7\" r=\"2\"/><circle cx=\"8\" cy=\"17\" r=\"2\"/></svg><span class=\"ds-tab-badge\">3</span></span><span>Admin</span></a><a class=\"ds-tab\" href=\"#\"><svg width=\"25\" height=\"25\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8.5\" r=\"3.8\"/><path d=\"M4.5 20.2c1.3-3.6 4.2-5.4 7.5-5.4s6.2 1.8 7.5 5.4\"/></svg><span>Account</span></a></nav>",
+      "css": ".ds-tabbar { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; width: 340px; height: 64px; padding: 5px; border-radius: 32px; background: rgb(255 255 255 / 0.66); -webkit-backdrop-filter: blur(24px) saturate(1.9); backdrop-filter: blur(24px) saturate(1.9); box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.95), inset 0 0 0 0.5px rgb(0 0 0 / 0.07), 0 14px 32px -12px rgb(0 0 0 / 0.24), 0 2px 6px rgb(0 0 0 / 0.05); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-tab { display: grid; justify-items: center; align-content: center; gap: 1px; border-radius: 27px; color: #000; font-size: 10.5px; font-weight: 600; text-decoration: none; transition: background-color 0.25s, transform 0.2s; } .ds-tab:hover { background: rgb(120 120 128 / 0.09); } .ds-tab:active { transform: scale(0.94); } .ds-tab:focus-visible { outline: 3px solid #0071e3; outline-offset: -3px; } .ds-tab[aria-current=\"page\"] { color: #0071e3; background: rgb(120 120 128 / 0.14); } .ds-tab-icon { position: relative; display: grid; } .ds-tab-badge { position: absolute; top: -5px; left: calc(100% - 9px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #d70015; color: #fff; font-size: 11.5px; line-height: 18px; text-align: center; }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "custom",
+      "refersTo": "button-secondary",
+      "description": "Read or Edit, With AI or Myself: real radios under a capsule track.",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\" aria-label=\"View\"><input type=\"radio\" name=\"ds-view\" id=\"ds-read\" checked><label for=\"ds-read\">Read</label><input type=\"radio\" name=\"ds-view\" id=\"ds-edit\"><label for=\"ds-edit\">Edit</label></div>",
+      "css": ".ds-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; width: 220px; padding: 3px; border-radius: 999px; background: rgb(120 120 128 / 0.14); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-seg input { position: absolute; opacity: 0; pointer-events: none; } .ds-seg label { display: grid; place-items: center; min-height: 34px; border-radius: 999px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background-color 0.25s, box-shadow 0.25s; } .ds-seg input:checked + label { background: #fff; box-shadow: 0 3px 8px rgb(0 0 0 / 0.12), 0 0.5px 1px rgb(0 0 0 / 0.1); } .ds-seg input:focus-visible + label { outline: 3px solid #0071e3; outline-offset: 1px; }"
+    },
+    {
+      "name": "Signature Card",
+      "kind": "card",
+      "refersTo": "sheet",
+      "description": "The doctor's signature as the website shows it, inside the sign-and-approve sheet.",
+      "html": "<div class=\"ds-sig\"><span class=\"ds-sig-avatar\" aria-hidden=\"true\">RM</span><span class=\"ds-sig-text\"><span class=\"ds-sig-label\">Medically reviewed by</span><span class=\"ds-sig-name\">Dr. Mehra</span><span class=\"ds-sig-cred\">MBBS, PGIMS Rohtak</span></span><span class=\"ds-sig-date\">30 September 2026</span></div>",
+      "css": ".ds-sig { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px 16px; padding: 16px; border-radius: 22px; background: #fff; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-sig-avatar { display: grid; place-items: center; width: 76px; height: 76px; border-radius: 50%; background: linear-gradient(180deg, #a2a2a7, #86868b); color: #fff; font-size: 26px; font-weight: 600; } .ds-sig-text { display: grid; gap: 2px; } .ds-sig-label { font-size: 13px; color: rgb(60 60 67 / 0.8); } .ds-sig-name { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; } .ds-sig-cred { font-size: 15px; color: rgb(60 60 67 / 0.8); } .ds-sig-date { grid-column: 1 / -1; padding-top: 10px; border-top: 0.5px solid rgb(60 60 67 / 0.2); font-size: 13px; color: rgb(60 60 67 / 0.8); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The First-Party App",
+    "overview": "Tvarvi should look as if Apple shipped it next to Health, Settings and Notes. It uses iOS 26's Liquid Glass played straight: grouped system grey, white inset lists, 34px large titles, system blue for anything tappable, and glass only on the bars, buttons and sheets that float over content. The brand shows in restraint, not in chrome. The article text is the content, and it gets the calmest page.\n\nThe density is standard iOS: one idea per screen and one primary action per page, in the floating toolbar. Everything secondary or rare waits in a sheet. Motion is the platform's own: sheets rise and fade, bars blur the content that scrolls under them, and a large title hands over to a small bar title as it scrolls away. Every wait on the AI shows a monochrome thinking orb with plain progress text, never a spinner.\n\nThe rejected reference is the generic admin dashboard, with its wide tables, top link bars and rows of stacked buttons.",
+    "keyCharacteristics": [
+      "Grouped grey ground (#f2f2f7), or pure black in dark mode, under white inset lists with 24px corners.",
+      "The system font only (SF Pro on Apple devices): 34px bold large titles and 17px body.",
+      "A floating glass capsule tab bar on phones, which moves to the top on screens 1024px wide and up, as on iPad.",
+      "One primary action per page, in a floating toolbar. Everything else is in a sheet.",
+      "Colour means state or action. Nothing is tinted for decoration.",
+      "Thinking orbs for every AI wait, drawn in the label colour."
+    ],
+    "rules": [
+      {
+        "name": "The System Colour Rule",
+        "body": "Colour means state or action, never decoration. Blue is what you can tap. Green, orange, red and indigo are statuses. Everything else is grey, black or white.",
+        "section": "colors"
+      },
+      {
+        "name": "The Contrast-Safe Tint Rule",
+        "body": "Status text uses the darkened tones over their soft fills, never the raw iOS system hues on white. In dark mode the brighter tones (#30d158, #ff9f0a, #ff6961, #9d9bff) take over.",
+        "section": "colors"
+      },
+      {
+        "name": "The Large Title Rule",
+        "body": "Every page opens with its title. On detail pages the small title in the bar stays hidden until the large one scrolls away.",
+        "section": "typography"
+      },
+      {
+        "name": "The Title-First Rule",
+        "body": "Status capsules, bylines and meta lines sit under a heading, never above it.",
+        "section": "typography"
+      },
+      {
+        "name": "The Floating Glass Rule",
+        "body": "Glass is only for controls that float over content: the tab bar, the toolbar, round navigation buttons and sheets. Content surfaces are opaque.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do give every page one primary action in the floating toolbar, and put secondary and rare actions in a sheet.",
+      "Do put a page's status capsule and meta lines under its title.",
+      "Do show every AI wait as a thinking orb with plain progress text (20px, 64px or 128px).",
+      "Do keep text at 4.5:1 or better, using the Placeholder token for placeholders, and keep control rings at 3:1 using Control Edge.",
+      "Do render data as inset list rows: a title, a subtitle of facts separated by dots, and a trailing value."
+    ],
+    "donts": [
+      "Don't build wide tables, top link bars or rows of stacked buttons.",
+      "Don't put glass on content surfaces or use it as decoration.",
+      "Don't place a label, status or kicker above a heading.",
+      "Don't use Tertiary Label for text.",
+      "Don't load fonts, scripts or images from other origins. The content security policy allows only the app's own files."
+    ]
+  }
+}
