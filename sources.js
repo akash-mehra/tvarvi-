@@ -6,6 +6,7 @@ import { lookup as dnsLookup } from 'node:dns';
 import https from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { all, audit, one, run, tx } from './db.js';
+import { BASE } from './http.js';
 import { clip, htmlToText } from './text.js';
 
 export class SourceError extends Error {}
@@ -73,7 +74,7 @@ function httpsGet(url) {
     const req = https.get(url, {
       lookup: safeLookup,
       timeout: TIMEOUT_MS,
-      headers: { 'user-agent': 'Tvarvi-compliance-check/1.0', accept: 'text/html, text/plain;q=0.9' },
+      headers: { 'user-agent': `Tvarvi-compliance-check/1.0 (+${BASE.origin})`, accept: 'text/html, text/plain;q=0.9' },
     }, (res) => {
       const status = res.statusCode ?? 0;
       const type = String(res.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
@@ -125,7 +126,9 @@ export async function fetchPage(rawUrl, allowedHosts) {
   throw new SourceError('The page redirects too many times.');
 }
 
-export const allowedHosts = () => new Set(all('SELECT DISTINCT host FROM sources WHERE active = 1').map((row) => row.host));
+// A host and its www twin are one site, so a page may move between them.
+export const allowedHosts = () => new Set(all('SELECT DISTINCT host FROM sources WHERE active = 1')
+  .flatMap(({ host }) => [host, host.startsWith('www.') ? host.slice(4) : `www.${host}`]));
 
 // Returns 'changed' (new pending snapshot), 'unchanged' or 'error' (stored on the source for the admin).
 export async function checkSource(source) {
