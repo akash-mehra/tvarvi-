@@ -58,6 +58,15 @@ test('the app shell: tabs by role, one self-hosted script only where the AI is w
     assert.deepEqual([icon.status, icon.headers.get('content-type')], [200, 'image/png']);
   });
 
+  await t.test('the Home Screen app covers the whole site, so no page opens in the in-app browser', async () => {
+    const res = await request('', '/manifest.webmanifest');
+    assert.deepEqual([res.status, res.headers.get('content-type')], [200, 'application/manifest+json']);
+    const manifest = await res.json();
+    assert.deepEqual([manifest.start_url, manifest.scope, manifest.display], ['/', '/', 'standalone']);
+    assert.match(res.headers.get('content-security-policy'), /manifest-src 'self'/);
+    assert.match(await page('', '/login'), /<link rel="manifest" href="\/manifest\.webmanifest">/);
+  });
+
   await t.test('each role gets its own tabs', async () => {
     assert.deepEqual(tabs(await page(admin, '/')), ['Home', 'Admin', 'Account']);
     assert.deepEqual(tabs(await page(writer, '/')), ['Home', 'Write', 'Account']);

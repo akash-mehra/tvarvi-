@@ -1,0 +1,11 @@
+{
+  "id": "/",
+  "name": "Tvarvi",
+  "short_name": "Tvarvi",
+  "description": "Review, sign and publish Tvarvi's health articles.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f2f2f7",
+  "icons": [{ "src": "/icon.png", "sizes": "180x180", "type": "image/png" }]
+}
