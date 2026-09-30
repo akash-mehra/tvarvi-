@@ -239,6 +239,7 @@ ${refresh ? html`<meta http-equiv="refresh" content="${refresh}">` : ''}
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 ${orbs ? html`<script src="/orbs.js" defer></script>` : ''}
 </head>
 <body class="${[bodyClass, tabs.length ? 'with-tabs' : ''].filter(Boolean).join(' ')}">

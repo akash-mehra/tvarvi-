@@ -36,6 +36,8 @@ const CSS = await readFile(new URL('./public/style.css', import.meta.url));
 // The thinking-orb animations: the only script the pages load (see the content security policy below).
 const ORBS = await readFile(new URL('./public/orbs.js', import.meta.url));
 const ICON = await readFile(new URL('./public/icon.png', import.meta.url));
+// Declares the whole site as one Home Screen app, so no page opens in Safari's in-app browser.
+const MANIFEST = await readFile(new URL('./public/manifest.webmanifest', import.meta.url));
 
 // ---------- passwords & sessions ----------
 
@@ -766,6 +768,11 @@ function appIcon({ res }) {
   res.end(ICON);
 }
 
+function appManifest({ res }) {
+  res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'public, max-age=3600' });
+  res.end(MANIFEST);
+}
+
 function stylesheet({ res }) {
   res.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=3600' });
   res.end(CSS);
@@ -913,6 +920,7 @@ const routes = [
   ['GET', /^\/style\.css$/, stylesheet, true],
   ['GET', /^\/orbs\.js$/, orbScript, true],
   ['GET', /^\/icon\.png$/, appIcon, true],
+  ['GET', /^\/manifest\.webmanifest$/, appManifest, true],
   ['GET', /^\/media\/([0-9a-f-]{36}\.(?:jpg|png|webp))$/, media, true],
   ['GET', /^\/glass\/t\/([A-Za-z0-9_-]{43})$/, glassDeck, true],
   ['POST', /^\/logout$/, logout],
@@ -992,7 +1000,7 @@ function startJobs() {
 
 export async function handler(req, res) {
   res.setHeader('content-security-policy',
-    `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'${GLASS ? ` ${GLASS.origin}` : ''}; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'`);
+    `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; form-action 'self'${GLASS ? ` ${GLASS.origin}` : ''}; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'`);
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'same-origin');
   let user = null;

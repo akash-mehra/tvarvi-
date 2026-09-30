@@ -17,7 +17,7 @@ A writer can also have the **article agent** research and draft an article from 
 
 ## Using the app
 
-The app looks and works like an iPhone app (iOS 26, Liquid Glass), because most reviewers read and sign on their phones. On a phone, add it to the Home Screen (Share, then Add to Home Screen) to open it full screen with its own icon. Its design rules are in [DESIGN.md](DESIGN.md).
+The app looks and works like an iPhone app (iOS 26, Liquid Glass), because most reviewers read and sign on their phones. On a phone, add it to the Home Screen (Share, then Add to Home Screen) to open it full screen with its own icon. If an earlier install shows Safari's address bar, delete it from the Home Screen and add it again: iOS reads the app's settings only when it is added. Its design rules are in [DESIGN.md](DESIGN.md).
 
 - **Tabs** sit at the bottom on phones and at the top on wider screens:
   - **Home** shows what needs you.
