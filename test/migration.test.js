@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tvarvi-migration-'));
 
-test('migrations 3 to 6 rebuild sources and knowledge, keeping every row and id, add carousels, signatures and pictures, and fix pasted rules', async () => {
+test('migrations 3 to 7 rebuild sources and knowledge, keeping every row and id, add carousels, signatures, photos and pictures, and fix pasted rules', async () => {
   // The tables migration 3 changes, as v2 left them.
   const old = new DatabaseSync(join(process.env.DATA_DIR, 'app.db'));
   old.exec(`
@@ -46,7 +46,7 @@ test('migrations 3 to 6 rebuild sources and knowledge, keeping every row and id,
   old.close();
 
   const { db, all, one, run } = await import('../db.js');
-  assert.equal(one('PRAGMA user_version').user_version, 6);
+  assert.equal(one('PRAGMA user_version').user_version, 7);
   assert.equal(one('PRAGMA foreign_keys').foreign_keys, 1, 'foreign keys are back on');
   assert.deepEqual(all('SELECT id, kind, host, last_error FROM sources WHERE id IN (3, 7) ORDER BY id').map((r) => ({ ...r })), [
     { id: 3, kind: 'compliance', host: 'reg.example', last_error: 'timeout' },
@@ -85,9 +85,9 @@ test('migrations 3 to 6 rebuild sources and knowledge, keeping every row and id,
   assert.equal(one(`SELECT COUNT(*) AS n FROM sqlite_temp_master`).n, 0, 'no temporary tables left behind');
   run(`INSERT INTO knowledge (kind, platform) VALUES ('brand_rule', 'website')`);
   assert.throws(() => run(`INSERT INTO knowledge (kind, platform) VALUES ('example', 'website')`), /CHECK/);
-  assert.deepEqual(Object.keys(one('SELECT sign_name, sign_credentials FROM users UNION ALL SELECT NULL, NULL LIMIT 1')), ['sign_name', 'sign_credentials']);
+  assert.deepEqual(Object.keys(one('SELECT sign_name, sign_credentials, sign_photo FROM users UNION ALL SELECT NULL, NULL, NULL LIMIT 1')), ['sign_name', 'sign_credentials', 'sign_photo']);
   assert.equal(one(`SELECT COUNT(*) AS n FROM pragma_table_info('items') WHERE name = 'pictures'`).n, 1);
-  assert.equal(one(`SELECT COUNT(*) AS n FROM pragma_table_info('articles') WHERE name IN ('signature', 'signed_at', 'audit_hash', 'audit_status', 'audit_notes')`).n, 5);
+  assert.equal(one(`SELECT COUNT(*) AS n FROM pragma_table_info('articles') WHERE name IN ('signature', 'signature_photo', 'signed_at', 'audit_hash', 'audit_status', 'audit_notes')`).n, 6);
   assert.equal(one(`SELECT COUNT(*) AS n FROM pragma_table_info('drafts') WHERE name = 'brief'`).n, 1);
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
 });

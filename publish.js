@@ -54,33 +54,39 @@ export const webhookSignature = (secret, timestamp, body) =>
 const longDate = (sqlTime) =>
   new Date(`${sqlTime.replace(' ', 'T')}Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
 
-// Who wrote the article and which doctor signed it off, from the approval record. Never AI-written.
-export const byline = (article) => ({
+// Who wrote the article and which doctor signed it off, with their photo, from the approval record. Never AI-written.
+export const byline = (article, baseUrl) => ({
   author: article.author,
   reviewer: article.signature ?? null,
+  reviewer_photo: article.signature_photo ? new URL(`/media/${article.signature_photo}`, baseUrl).href : null,
   reviewed: article.signed_at ? longDate(article.signed_at) : null,
 });
 
-// The article page's HTML: byline, the article (its pictures in place of the picture blocks), then the disclaimer.
-export function websiteHtml(article, figures = []) {
-  const by = byline(article);
-  const lines = [`Written by: ${by.author}`, ...(by.reviewer ? [`Medically reviewed by: ${by.reviewer}`, `Last reviewed: ${by.reviewed}`] : [])];
+// The article page's HTML: byline (the doctor's photo before their name), the article (its pictures in place of the
+// picture blocks), then the disclaimer.
+export function websiteHtml(article, figures = [], baseUrl) {
+  const by = byline(article, baseUrl);
+  const photo = by.reviewer_photo
+    ? `<img class="reviewer-photo" src="${esc(by.reviewer_photo)}" alt="" width="96" height="96" style="object-fit:cover"> `
+    : '';
+  const lines = [esc(`Written by: ${by.author}`),
+    ...(by.reviewer ? [photo + esc(`Medically reviewed by: ${by.reviewer}`), esc(`Last reviewed: ${by.reviewed}`)] : [])];
   return [
-    `<p class="byline">${lines.map(esc).join('<br>')}</p>`,
+    `<p class="byline">${lines.join('<br>')}</p>`,
     textToHtml(noEmDashes(article.body), { pictures: new Map(figures.map((f) => [f.n, f])) }),
     `<p class="disclaimer">${esc(DISCLAIMER)}</p>`,
   ].join('\n');
 }
 
-async function publishWebsite(item, article) {
+async function publishWebsite(item, article, baseUrl) {
   const [url, secret] = env('WEBSITE_WEBHOOK_URL', 'WEBSITE_WEBHOOK_SECRET');
   const figures = item.figures ?? [];
   const body = JSON.stringify({
     id: article.id,
     title: noEmDashes(article.title),
     slug: slugify(article.title, article.id),
-    html: websiteHtml(article, figures),
-    byline: byline(article),
+    html: websiteHtml(article, figures, baseUrl),
+    byline: byline(article, baseUrl),
     pictures: figures,
     published_at: new Date().toISOString(),
   });

@@ -13,6 +13,7 @@ const { handler, addUser } = await import('../server.js');
 const { ai } = await import('../ai.js');
 const { all, one, run } = await import('../db.js');
 const { createEntry } = await import('../knowledge.js');
+const { multipart, phonePhoto } = await import('./fixtures.js');
 
 const ORIGIN = 'http://app.test';
 const PASSWORD = 'correct horse battery staple';
@@ -63,6 +64,11 @@ const request = (cookie, path, init = {}) =>
   fetch(`${base}${path}`, { redirect: 'manual', ...init, headers: { cookie, ...init.headers } });
 const post = (cookie, path, fields, headers = { origin: ORIGIN }) =>
   request(cookie, path, { method: 'POST', headers, body: new URLSearchParams(fields) });
+// Signing details with a photo, as the Account page's form sends them.
+async function sign(cookie, photo) {
+  const [body, type] = await multipart({ sign_name: 'Dr. Rae  Reviewer', sign_credentials: 'MBBS — PGIMS Rohtak', photo: new Blob([photo]) });
+  return request(cookie, '/account/signature', { method: 'POST', headers: { origin: ORIGIN, 'content-type': type }, body });
+}
 
 async function login(email) {
   const res = await post('', '/login', { email, password: PASSWORD });
@@ -117,13 +123,22 @@ test('article goes from writer to published, following the diagram', async (t) =
     const res = await request(reviewer, '/');
     assert.deepEqual([res.status, res.headers.get('location')], [303, '/account']);
     assert.equal((await post(reviewer, '/articles/1', { action: 'approve', title: article.title, body: article.body })).headers.get('location'), '/account');
-    assert.match(await (await request(reviewer, '/account')).text(), /Add your signing details to continue/);
+    assert.match(await (await request(reviewer, '/account')).text(), /Add your signing details and photo to continue/);
     assert.equal((await post(reviewer, '/account/signature', { sign_name: 'Dr. Rae', sign_credentials: '' })).status, 400);
     assert.equal((await post(writer, '/account/signature', { sign_name: 'Wen', sign_credentials: 'MBBS' })).status, 403, 'only reviewers sign');
-    const saved = await post(reviewer, '/account/signature', { sign_name: 'Dr. Rae  Reviewer', sign_credentials: 'MBBS — PGIMS Rohtak' });
+    assert.equal((await post(reviewer, '/account/signature', { sign_name: 'Dr. Rae', sign_credentials: 'MBBS' })).status, 400, 'a photo is required');
+    assert.equal((await sign(reviewer, Buffer.from('GIF89a, not a JPEG or PNG'))).status, 400);
+    assert.equal((await sign(reviewer, Buffer.alloc(2 * 1024 * 1024 + 1, 0xff))).status, 413);
+    const saved = await sign(reviewer, phonePhoto());
     assert.equal(saved.status, 200);
     assert.deepEqual({ ...one(`SELECT sign_name, sign_credentials FROM users WHERE id = ?`, reviewerId) },
       { sign_name: 'Dr. Rae Reviewer', sign_credentials: 'MBBS, PGIMS Rohtak' });
+    // The photo is public for the website, without where it was taken or anything after the image.
+    const photo = await request('', `/media/${one('SELECT sign_photo FROM users WHERE id = ?', reviewerId).sign_photo}`);
+    const bytes = Buffer.from(await photo.arrayBuffer());
+    assert.deepEqual([photo.status, photo.headers.get('content-type')], [200, 'image/jpeg']);
+    assert.ok(!bytes.includes('Exif') && !bytes.includes('GPS') && bytes.subarray(-2).equals(Buffer.from([0xff, 0xd9])));
+    assert.match(await saved.text(), /<img class="avatar" src="\/media\/[0-9a-f-]{36}\.jpg"/);
     assert.equal((await request(reviewer, '/')).status, 200);
     assert.match(await (await request(admin, '/users')).text(), /Signs as Dr\. Rae Reviewer, MBBS, PGIMS Rohtak/);
     // The advisory audit ran on the assigned text; the reviewer sees it above the review form.
@@ -164,6 +179,19 @@ test('article goes from writer to published, following the diagram', async (t) =
     assert.equal(one('SELECT signature FROM articles WHERE id = 1').signature, 'Dr. Rae Reviewer, MBBS, PGIMS Rohtak');
     assert.match(one(`SELECT detail FROM events WHERE action = 'approved'`).detail,
       /^signed by Dr\. Rae Reviewer, MBBS, PGIMS Rohtak; approved over the AI audit's issues$/);
+    const photoOf = () => one('SELECT sign_photo FROM users WHERE id = ?', reviewerId).sign_photo;
+    const articlePhoto = () => one('SELECT signature_photo FROM articles WHERE id = 1').signature_photo;
+    assert.equal(articlePhoto(), photoOf(), 'approving copies the photo');
+    // An article signed before photos were asked for takes the doctor's next photo and keeps it; a replaced photo that
+    // no article carries is deleted.
+    run('UPDATE articles SET signature_photo = NULL WHERE id = 1');
+    await sign(reviewer, phonePhoto());
+    const signed = articlePhoto();
+    assert.equal(signed, photoOf());
+    await sign(reviewer, phonePhoto());
+    const unused = photoOf();
+    await sign(reviewer, phonePhoto());
+    assert.deepEqual([(await request('', `/media/${signed}`)).status, (await request('', `/media/${unused}`)).status], [200, 404]);
     assert.equal(audits.length, 2);
     assert.match(audits[1], /Eat leafy greens daily\./);
     await waitFor(() => !one(`SELECT 1 FROM items WHERE status = 'generating'`));

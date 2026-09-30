@@ -120,13 +120,13 @@ The social posts for the article cost extra after approval (see the cost estimat
 
 ## Website article
 
-**Signing.** Reviewers are doctors, and every article they approve carries their signature. The first time a reviewer logs in, the app asks for their signing details before anything else: the name as it should appear (for example "Dr. Mehra") and their qualifications ("MBBS, PGIMS Rohtak"). They can change them under their name at the top right; articles already approved keep the details they were signed with. Approving copies the signature and the date onto the article, and the history records it. Admins see each reviewer's details on the Team page.
+**Signing.** Reviewers are doctors, and every article they approve carries their signature. The first time a reviewer logs in, the app asks for their signing details before anything else: the name as it should appear (for example "Dr. Mehra"), their qualifications ("MBBS, PGIMS Rohtak") and a photo (JPEG or PNG, at most 2 MB). The photo's location and camera details are removed before it is saved, and it is public under a random address because the website shows it. They can change them under their name at the top right; articles already approved keep the details they were signed with. Approving copies the signature, the photo and the date onto the article, and the history records it. Admins see each reviewer's details on the Team page.
 
 **Final audit (advisory).** When an article is assigned to a reviewer, the app checks its exact text: the free code checks above, plus one compliance-agent review (`MODEL_COMPLIANCE`, about $0.10). The reviewer sees the result above the review form. It **never blocks approval**: the approval records what the audit said ("approved over the AI audit's issues"). It runs once per version of the text, so a second opinion on unchanged text reuses it, and an AI draft that passed its own review and was submitted unchanged isn't audited again.
 
 **Pictures.** After approval, Gemini (`GEMINI_IMAGE_MODEL`) makes one 16:9 illustration for each of the article's first 3 picture blocks, from its Description, and the picture check (`MODEL_IMAGE_CHECK`) looks for text, misleading medical content, anything the picture rules forbid, a realistic person, logos and a mismatch. A flagged picture is made again with the check's notes, up to 3 times, and the best one is kept with its notes. The website card shows the pictures to the reviewer, who can ask for a **New picture** for any one of them, then **Mark ready**. Each article can use at most 15 Gemini pictures. The pictures stay private until the article is published. Without `GEMINI_API_KEY` no pictures are made, and the picture blocks are left out of the published page. Pictures cost about $0.20–0.45 per article.
 
-**Publishing.** The website gets the article as HTML: the byline ("Written by", "Medically reviewed by" with the signature, "Last reviewed" with the approval date), the article with its pictures in place of the picture blocks, tables, links and `[n]` markers linked to their sources, then the **standard disclaimer** after the References. See [Website webhook](#website-webhook) for the payload; until it is connected, keep `website` in `DRY_RUN_CHANNELS`.
+**Publishing.** The website gets the article as HTML: the byline ("Written by", "Medically reviewed by" with the doctor's photo and signature, "Last reviewed" with the approval date), the article with its pictures in place of the picture blocks, tables, links and `[n]` markers linked to their sources, then the **standard disclaimer** after the References. See [Website webhook](#website-webhook) for the payload; until it is connected, keep `website` in `DRY_RUN_CHANNELS`.
 
 ## Instagram carousels
 
@@ -234,13 +234,13 @@ X-Webhook-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>" using W
 {
   "id": 12, "title": "...", "slug": "iron-and-energy-12",
   "html": "<p class=\"byline\">Written by: ...</p><h2>...</h2><p>...</p>...<p class=\"disclaimer\">This article is for general information ...</p>",
-  "byline": {"author": "Wen Writer", "reviewer": "Dr. Mehra, MBBS, PGIMS Rohtak", "reviewed": "28 September 2026"},
+  "byline": {"author": "Wen Writer", "reviewer": "Dr. Mehra, MBBS, PGIMS Rohtak", "reviewer_photo": "https://<PUBLIC_BASE_URL>/media/<uuid>.jpg", "reviewed": "28 September 2026"},
   "pictures": [{"n": 1, "title": "...", "alt": "...", "url": "https://<PUBLIC_BASE_URL>/media/<uuid>.png"}],
   "published_at": "2026-09-25T10:00:00.000Z"
 }
 ```
 
-The pictures are already in the HTML as `<img>` tags pointing at this app; the `pictures` list is there so the site can copy them to its own storage.
+The pictures and the doctor's photo are already in the HTML as `<img>` tags pointing at this app; the `pictures` list and `byline.reviewer_photo` are there so the site can copy them to its own storage.
 
 The endpoint must do four things:
 - Verify the signature.

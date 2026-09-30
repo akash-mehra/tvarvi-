@@ -360,6 +360,9 @@ const MIGRATIONS = [
   DROP TABLE setup_fixes;
   DROP TABLE setup_sources;
   `,
+  // Each reviewer's photo, shown with their signature on the website; approving copies it onto the article.
+  `ALTER TABLE users ADD COLUMN sign_photo TEXT;
+  ALTER TABLE articles ADD COLUMN signature_photo TEXT;`,
 ];
 
 // Foreign keys are off while migrating (SQLite's documented way to rebuild a table) and checked before each commit.

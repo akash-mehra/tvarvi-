@@ -15,7 +15,7 @@ const { handler, addUser } = await import('../server.js');
 const { ai } = await import('../ai.js');
 const { gemini } = await import('../gemini.js');
 const { all, one, UPLOADS } = await import('../db.js');
-const { agentOf, jpeg, picture, PNG, table } = await import('./fixtures.js');
+const { agentOf, jpeg, multipart, picture, PNG, table } = await import('./fixtures.js');
 
 const ORIGIN = 'http://app.test';
 const PASSWORD = 'correct horse battery staple';
@@ -94,7 +94,8 @@ test('an approved article gets its 3 Gemini pictures, the doctor’s byline and 
   await addUser({ name: 'Wen Writer', email: 'writer@example.com', can_write: 1 }, PASSWORD);
   const reviewerId = await addUser({ name: 'Dr Mehra', email: 'doctor@example.com', can_review: 1, can_publish: 1 }, PASSWORD);
   const [admin, writer, doctor] = await Promise.all(['admin', 'writer', 'doctor'].map((r) => login(`${r}@example.com`)));
-  assert.equal((await post(doctor, '/account/signature', { sign_name: 'Dr. Mehra', sign_credentials: 'MBBS, PGIMS Rohtak' })).status, 200);
+  const [signing, type] = await multipart({ sign_name: 'Dr. Mehra', sign_credentials: 'MBBS, PGIMS Rohtak', photo: new Blob([jpeg(600, 600)]) });
+  assert.equal((await request(doctor, '/account/signature', { method: 'POST', headers: { origin: ORIGIN, 'content-type': type }, body: signing })).status, 200);
 
   await t.test('em dashes are gone from the article as soon as it is submitted', async () => {
     assert.equal((await post(writer, '/articles', { title: 'PCOS — what to know', body: BODY })).status, 303);
@@ -172,9 +173,12 @@ test('an approved article gets its 3 Gemini pictures, the doctor’s byline and 
     assert.match(headers['x-webhook-signature'], /^sha256=[0-9a-f]{64}$/);
     const signed = one('SELECT signed_at FROM articles WHERE id = 1').signed_at;
     const day = new Date(`${signed.replace(' ', 'T')}Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
-    assert.deepEqual(body.byline, { author: 'Wen Writer', reviewer: 'Dr. Mehra, MBBS, PGIMS Rohtak', reviewed: day });
+    const photo = `http://app.test/media/${one('SELECT signature_photo FROM articles WHERE id = 1').signature_photo}`;
+    assert.deepEqual(body.byline, { author: 'Wen Writer', reviewer: 'Dr. Mehra, MBBS, PGIMS Rohtak', reviewer_photo: photo, reviewed: day });
     assert.equal(body.title, 'PCOS, what to know');
-    assert.ok(body.html.startsWith(`<p class="byline">Written by: Wen Writer<br>Medically reviewed by: Dr. Mehra, MBBS, PGIMS Rohtak<br>Last reviewed: ${day}</p>\n<h2>Tvarvi Key Takeaways</h2>`));
+    assert.ok(body.html.startsWith(`<p class="byline">Written by: Wen Writer<br><img class="reviewer-photo" src="${photo}" alt="" width="96" height="96" style="object-fit:cover"> Medically reviewed by: Dr. Mehra, MBBS, PGIMS Rohtak<br>Last reviewed: ${day}</p>\n<h2>Tvarvi Key Takeaways</h2>`));
+    const served = await request('', photo.replace('http://app.test', ''));
+    assert.deepEqual([served.status, served.headers.get('content-type')], [200, 'image/jpeg']);
     assert.match(body.html, /you can book a consultation with Tvarvi\.<\/p>/);
     assert.equal((body.html.match(/<a href/g) ?? []).length, 2, 'only the [1] marker and its References entry link out');
     assert.match(body.html, /affects many women <a href="https:\/\/www\.who\.int\/pcos">\[1\]<\/a>\./);
@@ -201,4 +205,19 @@ test('an approved article gets its 3 Gemini pictures, the doctor’s byline and 
     assert.ok(events.some((e) => e.startsWith('pictures_done: 3 of 3 pictures made')));
     assert.ok(events.includes('new_picture: website picture 2'));
   });
+});
+
+test('a signature photo keeps only the picture: PNG text and EXIF chunks go, and anything else is refused', async () => {
+  const { cleanPhoto } = await import('../pictures.js');
+  const chunk = (type, data = '') => {
+    const bytes = Buffer.alloc(12 + data.length);
+    bytes.writeUInt32BE(data.length);
+    bytes.write(type + data, 4, 'latin1');
+    return bytes;
+  };
+  const png = Buffer.concat([PNG.subarray(0, 8), chunk('IHDR', 'x'.repeat(13)), chunk('tEXt', 'GPS 28.6N'), chunk('eXIf', 'Exif'), chunk('IDAT', 'pixels'), chunk('IEND')]);
+  const clean = cleanPhoto(png);
+  assert.equal(clean.type, 'image/png');
+  assert.ok(clean.bytes.includes('pixels') && !clean.bytes.includes('GPS') && !clean.bytes.includes('Exif'));
+  for (const bad of [PNG, Buffer.from('GIF89a'), jpeg().subarray(0, 30), Buffer.alloc(0)]) assert.equal(cleanPhoto(bad), null);
 });
