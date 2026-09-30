@@ -134,3 +134,14 @@ test('research sources set the article agent domains, and a host covers its subd
     assert.equal(s.onApprovedHost(url, hosts), false, url);
   }
 });
+
+test('a page may move between a host and its www twin, and nowhere else', async () => {
+  const id = s.addSource('https://www.news.example/guidelines', 'compliance', 1);
+  pages = {
+    'https://www.news.example/guidelines': redirectTo('https://news.example/guidelines'),
+    'https://news.example/guidelines': html('<p>Influencer guidelines</p>'),
+  };
+  assert.equal(await s.checkSource(one('SELECT * FROM sources WHERE id = ?', id)), 'changed');
+  assert.equal(one('SELECT text FROM snapshots WHERE source_id = ?', id).text, 'Influencer guidelines');
+  assert.ok(s.allowedHosts().has('www.nih.gov') && !s.allowedHosts().has('ncbi.nlm.nih.gov'));
+});

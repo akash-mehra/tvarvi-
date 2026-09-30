@@ -66,7 +66,7 @@ Each agent's model is set with an environment variable:
   - The server fetches each one right away and then daily, and stores it as a text snapshot.
   - A new or changed page shows its differences and waits for **Approve / Reject**. Until you approve it, the compliance agent keeps using the last approved version.
   - PDF pages aren't supported yet, so add the HTML version.
-  - Fetching blocks private and internal addresses, re-checks every redirect against the allowlist, and stops after 2 MB or 15 seconds.
+  - Fetching blocks private and internal addresses, re-checks every redirect against the allowlist (a host and its www twin count as one site), and stops after 2 MB or 15 seconds.
 - **Trends sources** set the only domains the trend scout may search or open. Trending keywords are used only where they fit the article's facts.
 - **Research sites** are the only medical sites the article agent may search, open and cite. A site covers its subdomains: `https://nih.gov` allows every `*.nih.gov` site, while `https://www.nhs.uk` allows only `www.nhs.uk`.
 - **Deleting** a source works the same way: type `delete` to confirm. It removes the source and its saved page versions, unless a post or draft was checked against one of them.
