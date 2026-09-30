@@ -62,16 +62,17 @@ test('a writer drafts an article with the agent, checks it and submits it into t
   const [admin, writer, other, reviewer, plain] = await Promise.all(['admin', 'writer', 'other', 'reviewer', 'plain'].map((r) => login(`${r}@example.com`)));
 
   await t.test('drafting needs Research sites, which only admins add', async () => {
-    assert.match(await page(writer, '/'), /An admin needs to add Research sites/);
+    assert.match(await page(writer, '/write'), /An admin needs to add Research sites/);
     assert.equal((await post(writer, '/drafts', { topic: 'iron and energy' })).status, 400);
     assert.equal((await post(writer, '/sources', { url: 'https://nih.gov', kind: 'research' })).status, 403);
     for (const url of ['https://nih.gov', 'https://www.nhs.uk']) {
       assert.equal((await post(admin, '/sources', { url, kind: 'research' })).status, 303);
     }
     const sources = await page(admin, '/sources');
-    assert.match(sources, /value="research"> Research site/);
-    assert.match(sources, /<td>Research<\/td>/);
-    assert.match(await page(writer, '/'), /Research and draft/);
+    assert.match(sources, /value="research"><span>Research site/);
+    assert.match(sources, /<h2 class="group-header">Research sites<\/h2>[\s\S]*?nih\.gov/);
+    assert.match(await page(writer, '/write'), /Research and draft/);
+    assert.equal((await request(plain, '/write')).status, 403, 'the Write tab is for writers');
   });
 
   await t.test('only writers can start a draft, with a valid topic', async () => {
@@ -93,9 +94,9 @@ test('a writer drafts an article with the agent, checks it and submits it into t
     assert.match(html, /name="title" value="Iron and energy: a guide for women"/);
     assert.match(html, /## References\n\n1\. Iron deficiency anaemia - NHS\./);
     assert.match(html, /Claims and the passages they cite \(6\)/);
-    assert.match(html, /✓ References: 6 opened pages cited/);
+    assert.match(html, /<li class="pass">[^]*?Passed: <\/span>References: 6 opened pages cited/);
     assert.match(html, /Opened https:\/\/www\.nhs\.uk\/conditions\/iron-deficiency-anaemia\//);
-    assert.match(await page(writer, '/'), new RegExp(`<a href="/drafts/${id}">iron and energy</a>`));
+    assert.match(await page(writer, '/write'), new RegExp(`<a class="row" href="/drafts/${id}">[\\s\\S]*?iron and energy`));
   });
 
   await t.test('the research record is private until it becomes an article', async () => {
@@ -179,11 +180,11 @@ test('a writer drafts an article with the agent, checks it and submits it into t
 
   await t.test('the Training page reports the article agent per draft', async () => {
     const html = await page(admin, '/training');
-    assert.match(html, /<td>Article agent<\/td><td>claude-opus-5-5<\/td>/);
-    assert.match(html, /<td>Article agent<\/td><td>claude-sonnet-5<\/td>/);
+    assert.match(html, /<span class="row-title">Article agent<\/span>\s*<span class="row-sub"><span>claude-opus-5-5<\/span>/);
+    assert.match(html, /<span class="row-title">Article agent<\/span>\s*<span class="row-sub"><span>claude-sonnet-5<\/span>/);
     assert.match(html, /Article agent: \$\d+\.\d\d and \d+ min per draft on average, over \d+ drafts/);
     // Per article: only the final audit (one Opus 5.5 call, 1,000 in and 500 out: $0.014); the drafts' calls don't count.
-    assert.match(html, /<td>Final audit<\/td><td>claude-opus-5-5<\/td><td>1<\/td>/);
+    assert.match(html, /<span class="row-title">Final audit<\/span>\s*<span class="row-sub"><span>claude-opus-5-5<\/span><span class="sep"><\/span><span>1 call<\/span>/);
     assert.match(html, /Average cost per article: \$0\.01 over 1 article/);
   });
 

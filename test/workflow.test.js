@@ -138,14 +138,17 @@ test('article goes from writer to published, following the diagram', async (t) =
     const bytes = Buffer.from(await photo.arrayBuffer());
     assert.deepEqual([photo.status, photo.headers.get('content-type')], [200, 'image/jpeg']);
     assert.ok(!bytes.includes('Exif') && !bytes.includes('GPS') && bytes.subarray(-2).equals(Buffer.from([0xff, 0xd9])));
-    assert.match(await saved.text(), /<img class="avatar" src="\/media\/[0-9a-f-]{36}\.jpg"/);
+    assert.match(await saved.text(), /<img class="avatar lg" src="\/media\/[0-9a-f-]{36}\.jpg" alt="Your photo, as the website shows it">/);
     assert.equal((await request(reviewer, '/')).status, 200);
     assert.match(await (await request(admin, '/users')).text(), /Signs as Dr\. Rae Reviewer, MBBS, PGIMS Rohtak/);
     // The advisory audit ran on the assigned text; the reviewer sees it above the review form.
     await waitFor(() => one('SELECT audit_status FROM articles WHERE id = 1').audit_status !== 'running');
     const page = await (await request(reviewer, '/articles/1')).text();
     assert.match(page, /AI audit \(advisory\)[\s\S]*Cite the source for &quot;Iron matters\.&quot;/);
-    assert.match(page, /Approving signs the article as <strong>Dr\. Rae Reviewer, MBBS, PGIMS Rohtak<\/strong>/);
+    // Approving opens a sheet with the doctor's signature: photo, name and qualifications.
+    assert.match(page, /<button type="button" class="btn when-read" popovertarget="sign-sheet">/);
+    assert.match(page, /<div id="sign-sheet" popover class="sheet"[\s\S]*<span class="sig-name">Dr\. Rae Reviewer<\/span><span class="sig-cred">MBBS, PGIMS Rohtak<\/span>/);
+    assert.match(page, /<button class="btn wide" form="review" name="action" value="approve">/);
   });
 
   await t.test('reviewer edits: old and new versions go to the admin as a diff', async () => {
@@ -219,9 +222,9 @@ test('article goes from writer to published, following the diagram', async (t) =
 
   await t.test('the Training page prices each call at its own model', async () => {
     const page = await (await request(admin, '/training')).text();
-    assert.match(page, /<td>Compliance<\/td><td>claude-opus-5-5<\/td><td>6<\/td>/);
-    assert.match(page, /<td>Writer<\/td><td>claude-sonnet-5<\/td><td>9<\/td>/);
-    assert.match(page, /<td>Final audit<\/td><td>claude-opus-5-5<\/td><td>2<\/td>/);
+    assert.match(page, /<span class="row-title">Compliance<\/span>\s*<span class="row-sub"><span>claude-opus-5-5<\/span><span class="sep"><\/span><span>6 calls<\/span>/);
+    assert.match(page, /<span class="row-title">Writer<\/span>\s*<span class="row-sub"><span>claude-sonnet-5<\/span><span class="sep"><\/span><span>9 calls<\/span>/);
+    assert.match(page, /<span class="row-title">Final audit<\/span>\s*<span class="row-sub"><span>claude-opus-5-5<\/span><span class="sep"><\/span><span>2 calls<\/span>/);
     // 9 Sonnet 5 calls at $0.004 + 6 Opus 5.5 reviews and 2 Opus 5.5 audits at $0.008 (1,000 input and 200 output
     // tokens each) = $0.10.
     assert.match(page, /Average cost per article: \$0\.10 over 1 article/);
@@ -273,8 +276,8 @@ test('article goes from writer to published, following the diagram', async (t) =
     const promoted = one(`SELECT k.platform, v.text, v.likes, v.reach, v.version FROM knowledge k
       JOIN knowledge_versions v ON v.id = k.current_version_id WHERE k.source_item_id = ?`, x.id);
     assert.deepEqual({ ...promoted }, { platform: 'x', text: x.body, likes: 12, reach: 800, version: 1 });
-    const page = await (await request(admin, '/articles/1')).text();
-    assert.match(page, /Sources used/);
+    const page = await (await request(admin, `/items/${x.id}`)).text();
+    assert.match(page, /Sources used \(\d+\)/);
     assert.match(page, /Brand rule &quot;Voice guide&quot; v1/);
   });
 });

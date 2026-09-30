@@ -33,6 +33,9 @@ const PUBLISHABLE = ['ready', 'publishing', 'published', 'publish_failed'];
 const CHANNEL_ORDER = ['website', ...SOCIAL];
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CSS = await readFile(new URL('./public/style.css', import.meta.url));
+// The thinking-orb animations: the only script the pages load (see the content security policy below).
+const ORBS = await readFile(new URL('./public/orbs.js', import.meta.url));
+const ICON = await readFile(new URL('./public/icon.png', import.meta.url));
 
 // ---------- passwords & sessions ----------
 
@@ -87,11 +90,16 @@ function startSession(res, userId) {
 function currentUser(req) {
   const token = cookies(req).sid;
   if (!token) return null;
-  return one(
+  const user = one(
     `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`,
     sha256(token), Date.now(),
   ) ?? null;
+  // Admins see on the Admin tab how many suggestions and changed compliance pages wait for a decision.
+  if (user?.is_admin) {
+    user.pending = one(`SELECT (SELECT COUNT(*) FROM suggestions WHERE status = 'pending') + (SELECT COUNT(*) FROM snapshots WHERE status = 'pending') AS n`).n;
+  }
+  return user;
 }
 
 // ---------- workflow rules ----------
@@ -148,8 +156,6 @@ const LIST_SQL = `SELECT a.id, a.title, a.status, a.updated_at, au.name AS autho
 function dashboard({ res, user }) {
   send(res, view.dashboardPage(user, {
     mine: user.can_write ? all(`${LIST_SQL} WHERE a.author_id = ? ORDER BY a.id DESC LIMIT 50`, user.id) : [],
-    drafts: user.can_write ? all('SELECT id, topic, status, created_at FROM drafts WHERE created_by = ? ORDER BY id DESC LIMIT 20', user.id) : [],
-    researchReady: user.can_write && researchSources().length > 0,
     queue: user.is_admin ? all(`${LIST_SQL} WHERE a.status IN ('submitted', 'returned') ORDER BY a.updated_at`) : [],
     inProgress: user.is_admin
       ? all(`${LIST_SQL} WHERE a.status IN ('in_review', 'approved', 'awaiting_publisher') ORDER BY a.updated_at DESC`)
@@ -164,6 +170,29 @@ function dashboard({ res, user }) {
           snapshots: one(`SELECT COUNT(*) AS n FROM snapshots WHERE status = 'pending'`).n,
         }
       : null,
+  }));
+}
+
+// The Write tab: research and draft with the article agent, or write it yourself.
+function writePage({ res, user }) {
+  if (!user.can_write) fail(403, 'Only writers can write articles.');
+  send(res, view.writePage(user, {
+    drafts: all('SELECT id, topic, status, created_at FROM drafts WHERE created_by = ? ORDER BY id DESC LIMIT 20', user.id),
+    researchReady: researchSources().length > 0,
+  }));
+}
+
+// The Admin tab: training, sources, suggestions and the team, with what waits for a decision.
+function adminHub({ res, user }) {
+  if (!user.is_admin) fail(403, 'Only admins can open this page.');
+  const count = (sql) => one(sql).n;
+  send(res, view.adminPage(user, {
+    rules: count(`SELECT COUNT(*) AS n FROM knowledge WHERE kind != 'example'`),
+    examples: count(`SELECT COUNT(*) AS n FROM knowledge WHERE kind = 'example'`),
+    sources: count('SELECT COUNT(*) AS n FROM sources'),
+    snapshots: count(`SELECT COUNT(*) AS n FROM snapshots WHERE status = 'pending'`),
+    suggestions: count(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`),
+    members: count('SELECT COUNT(*) AS n FROM users WHERE active = 1'),
   }));
 }
 
@@ -259,23 +288,25 @@ async function draftAction({ req, res, user, params: [id] }) {
   redirect(res, '/');
 }
 
+// What this person may do with the article and its posts.
+const articlePerm = (user, a, items) => ({
+  assign: !!user.is_admin && ['submitted', 'returned'].includes(a.status),
+  review: isReviewer(user, a) && a.status === 'in_review',
+  editItems: isReviewer(user, a) && a.status === 'approved',
+  publish: canPublish(user, a, items),
+  sendToPublisher: isReviewer(user, a) && !!user.can_publish && a.status === 'approved' && allReady(items),
+  sendBack: !!user.can_publish && a.status === 'awaiting_publisher',
+  promote: !!user.is_admin,
+  metrics: !!(user.is_admin || user.can_publish),
+  pictures: !!process.env.GEMINI_API_KEY,
+});
+
 function articlePage({ res, user, params: [id] }) {
   const a = getArticle(Number(id));
   if (!canView(user, a)) fail(403, 'You do not have access to this article.');
   const items = getItems(a.id);
   const generating = items.some((i) => i.status === 'generating');
-  const perm = {
-    assign: !!user.is_admin && ['submitted', 'returned'].includes(a.status),
-    review: isReviewer(user, a) && a.status === 'in_review',
-    // Editing is paused while the page auto-refreshes for the AI, so no typing is lost.
-    editItems: isReviewer(user, a) && a.status === 'approved' && !generating,
-    publish: canPublish(user, a, items),
-    sendToPublisher: isReviewer(user, a) && !!user.can_publish && a.status === 'approved' && allReady(items),
-    sendBack: !!user.can_publish && a.status === 'awaiting_publisher',
-    promote: !!user.is_admin,
-    metrics: !!(user.is_admin || user.can_publish),
-    pictures: !!process.env.GEMINI_API_KEY,
-  };
+  const perm = articlePerm(user, a, items);
   send(res, view.articlePage(user, {
     article: { ...a, draftId: one('SELECT id FROM drafts WHERE article_id = ?', a.id)?.id ?? null },
     items: describeItems(items),
@@ -289,6 +320,21 @@ function articlePage({ res, user, params: [id] }) {
       ? all('SELECT id, name FROM users WHERE can_review = 1 AND active = 1 AND id != ? ORDER BY name', a.author_id)
       : [],
   }));
+}
+
+// One post (the website article, or an Instagram, LinkedIn or X post) on its own page, with the next one to look at.
+function itemPage({ res, user, params: [id] }) {
+  const item = one('SELECT * FROM items WHERE id = ?', Number(id)) ?? fail(404, 'Post not found.');
+  const a = getArticle(item.article_id);
+  if (!canView(user, a)) fail(403, 'You do not have access to this post.');
+  const items = getItems(a.id);
+  const perm = articlePerm(user, a, items);
+  const index = items.findIndex((i) => i.id === item.id);
+  const others = [...items.slice(index + 1), ...items.slice(0, index)];
+  const next = perm.editItems
+    ? others.find((i) => ['draft', 'failed', 'generating'].includes(i.status))
+    : perm.publish ? others.find((i) => ['ready', 'publish_failed'].includes(i.status)) : null;
+  send(res, view.itemPage(user, { article: a, item: describeItems([item])[0], perm, next: next ?? null }));
 }
 
 // The advisory audit runs once per version of the text: a second opinion on unchanged text reuses its result.
@@ -336,7 +382,7 @@ async function articleAction({ req, res, user, params: [id] }) {
     const changed = title !== noEmDashes(a.title) || body !== noEmDashes(a.body);
     if (action === 'approve') {
       if (changed) fail(400, 'You changed the text, so use "Send to admin" and the admin will see your changes.');
-      if (!user.sign_name || !user.sign_photo) fail(400, 'Add your signing details and photo first: click your name at the top right.');
+      if (!user.sign_name || !user.sign_photo) fail(400, 'Add your signing details and photo first, on the Account tab.');
       // The doctor's signature and photo go on the article; the AI audit is only reported, never a condition.
       const signature = `${user.sign_name}, ${user.sign_credentials}`;
       const pictures = process.env.GEMINI_API_KEY && pictureBlocks(body).length ? 'generating' : 'ready';
@@ -424,7 +470,7 @@ async function itemAction({ req, res, user, params: [id] }) {
   } else {
     fail(400, 'Unknown action.');
   }
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 // The website article's text is the approved article itself: the reviewer checks its pictures and marks it ready.
@@ -448,7 +494,7 @@ function websiteAction(res, user, a, item, action) {
   } else {
     fail(400, 'Unknown action.');
   }
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 // Admin turns a reviewer-approved post into a versioned example the writer agent learns from.
@@ -466,7 +512,7 @@ function promote(res, user, a, item) {
     }, user.id);
     logEvent(a.id, user.id, 'promoted', CHANNELS[item.channel].label);
   });
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 // Engagement typed in from the platform. Later the Instagram Insights API adds rows with source 'instagram_insights'.
@@ -480,7 +526,7 @@ function recordMetrics(res, user, a, item, form) {
       item.id, likes, shares, reach, saves, user.id);
     logEvent(a.id, user.id, 'metrics', `${CHANNELS[item.channel].label}: ${reach} reach, ${shares} shares, ${likes} likes, ${saves} saves`);
   });
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 async function publish(res, user, a, item) {
@@ -488,7 +534,7 @@ async function publish(res, user, a, item) {
   const label = CHANNELS[item.channel].label;
   // Claim the item first: a second click or a second publisher cannot post it twice.
   const { changes } = run(`UPDATE items SET status = 'publishing', error = NULL WHERE id = ? AND status IN ('ready', 'publish_failed')`, item.id);
-  if (!changes) return redirect(res, `/articles/${a.id}`);
+  if (!changes) return redirect(res, `/items/${item.id}`);
   try {
     const slides = item.channel === 'instagram' ? carouselFor(item.id)?.finals ?? [] : [];
     const figures = item.channel === 'website' ? await publicPictures(item) : [];
@@ -510,7 +556,7 @@ async function publish(res, user, a, item) {
     run(`UPDATE items SET status = 'publish_failed', error = ? WHERE id = ?`, message, item.id);
     logEvent(a.id, user.id, 'publish_failed', `${label}: ${message}`);
   }
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 // The website pictures, copied under public names when the article is published, as Instagram images are, so the
@@ -554,7 +600,7 @@ async function uploadImage({ req, res, user, params: [id] }) {
     throw err;
   }
   if (item.image) await unlink(join(UPLOADS, item.image)).catch(() => {});
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 // ---------- Instagram carousels ----------
@@ -593,7 +639,7 @@ async function toggleCarousel({ req, res, user, params: [id] }) {
     discardCarousel(current);
     logEvent(a.id, user.id, 'carousel_removed');
   }
-  redirect(res, `/articles/${a.id}`);
+  redirect(res, `/items/${item.id}`);
 }
 
 function carouselPage({ res, user, params: [id] }) {
@@ -630,7 +676,7 @@ async function carouselAction({ req, res, user, params: [id] }) {
   } else if (action === 'discard') {
     discardCarousel(c);
     logEvent(a.id, user.id, 'carousel_removed');
-    return redirect(res, `/articles/${a.id}`);
+    return redirect(res, `/items/${item.id}`);
   } else {
     fail(400, 'Unknown action.');
   }
@@ -710,6 +756,16 @@ async function media({ res, params: [name] }) {
   res.end(bytes);
 }
 
+function orbScript({ res }) {
+  res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'public, max-age=3600' });
+  res.end(ORBS);
+}
+
+function appIcon({ res }) {
+  res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
+  res.end(ICON);
+}
+
 function stylesheet({ res }) {
   res.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=3600' });
   res.end(CSS);
@@ -773,7 +829,7 @@ async function updateUser(ctx) {
   const target = one('SELECT * FROM users WHERE id = ?', Number(id)) ?? fail(404, 'Team member not found.');
   const form = await readForm(req);
   if (form.get('action') === 'reset_password') {
-    if (target.id === user.id) fail(400, 'Change your own password by clicking your name at the top right.');
+    if (target.id === user.id) fail(400, 'Change your own password on the Account tab.');
     const password = newPassword();
     run('UPDATE users SET pw_hash = ? WHERE id = ?', await hashPassword(password), target.id);
     run('DELETE FROM sessions WHERE user_id = ?', target.id);
@@ -855,16 +911,21 @@ const routes = [
   ['GET', /^\/login$/, loginPage, true],
   ['POST', /^\/login$/, login, true],
   ['GET', /^\/style\.css$/, stylesheet, true],
+  ['GET', /^\/orbs\.js$/, orbScript, true],
+  ['GET', /^\/icon\.png$/, appIcon, true],
   ['GET', /^\/media\/([0-9a-f-]{36}\.(?:jpg|png|webp))$/, media, true],
   ['GET', /^\/glass\/t\/([A-Za-z0-9_-]{43})$/, glassDeck, true],
   ['POST', /^\/logout$/, logout],
   ['GET', /^\/$/, dashboard],
+  ['GET', /^\/write$/, writePage],
+  ['GET', /^\/admin$/, adminHub],
   ['POST', /^\/articles$/, createArticle],
   ['POST', /^\/drafts$/, createDraft],
   ['GET', /^\/drafts\/(\d{1,12})$/, draftPage],
   ['POST', /^\/drafts\/(\d{1,12})$/, draftAction],
   ['GET', /^\/articles\/(\d{1,12})$/, articlePage],
   ['POST', /^\/articles\/(\d{1,12})$/, articleAction],
+  ['GET', /^\/items\/(\d{1,12})$/, itemPage],
   ['POST', /^\/items\/(\d{1,12})$/, itemAction],
   ['POST', /^\/items\/(\d{1,12})\/image$/, uploadImage],
   ['POST', /^\/items\/(\d{1,12})\/carousel$/, toggleCarousel],
@@ -931,7 +992,7 @@ function startJobs() {
 
 export async function handler(req, res) {
   res.setHeader('content-security-policy',
-    `default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'${GLASS ? ` ${GLASS.origin}` : ''}; frame-ancestors 'none'; base-uri 'none'`);
+    `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'${GLASS ? ` ${GLASS.origin}` : ''}; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'`);
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'same-origin');
   let user = null;
@@ -968,7 +1029,7 @@ async function main() {
     }
     const password = newPassword();
     await addUser({ name, email, is_admin: 1, can_write: 1, can_review: 1, can_publish: 1 }, password);
-    console.log(`Admin created: ${email}\nPassword: ${password}\nChange it after logging in (click your name at the top right).`);
+    console.log(`Admin created: ${email}\nPassword: ${password}\nChange it after logging in, on the Account tab.`);
     return;
   }
   if (!process.env.PUBLIC_BASE_URL) {
