@@ -552,6 +552,7 @@ export function knowledgePage(user, entry, history) {
   ${entry.active
     ? html`<button name="action" value="deactivate" class="secondary">Deactivate (agents stop using it)</button>`
     : html`<button name="action" value="activate" class="secondary">Reactivate</button>`}
+  <a class="danger" href="/knowledge/${entry.id}/delete">Delete…</a>
 </form>
 <h2>Edit (creates v${entry.version + 1})</h2>
 <form method="post" action="/knowledge/${entry.id}" class="stack panel">
@@ -768,11 +769,52 @@ ${sources.length
     <td><form method="post" action="/sources/${s.id}" class="inline">
       ${s.kind === 'compliance' && s.active ? html`<button name="action" value="check" class="secondary">Check now</button>` : ''}
       <button name="action" value="${s.active ? 'deactivate' : 'activate'}" class="secondary">${s.active ? 'Deactivate' : 'Activate'}</button>
+      <a class="danger" href="/sources/${s.id}/delete">Delete…</a>
     </form></td>
   </tr>`)}</tbody>
 </table>`
     : html`<p class="muted">No sources yet.</p>`}`);
 }
+
+// ---------- admin: deleting, after typing "delete" ----------
+
+function deletePage(user, { title, what, facts, used, usedText, action, back }) {
+  return layout(title, user, html`
+<p><a href="${back}">← Back</a></p>
+<h1>${title}</h1>
+<ul class="facts">${facts.map((fact) => html`<li>${fact}</li>`)}</ul>
+${used
+    ? html`<p class="warn">${usedText} It can't be deleted, so it stays in their record. Deactivate it instead: the agents stop using it straight away.</p>`
+    : html`<section class="panel danger-zone">
+  <p><strong>This permanently deletes ${what}. It can't be undone.</strong> The agents stop using it straight away, and the audit log keeps a note of what was deleted.</p>
+  <form method="post" action="${action}" class="stack narrow">
+    <label><span>Type <strong>delete</strong> to confirm</span> <input name="confirm" required pattern="delete" autocomplete="off" spellcheck="false"></label>
+    <button class="danger">Delete permanently</button>
+  </form>
+</section>`}`);
+}
+
+export const deleteKnowledgePage = (user, { entry, versions, used }) =>
+  deletePage(user, {
+    title: `Delete this ${KNOWLEDGE_KINDS[entry.kind].toLowerCase()}?`,
+    what: `this ${KNOWLEDGE_KINDS[entry.kind].toLowerCase()} and ${versions === 1 ? 'its version' : `all ${versions} of its versions`}`,
+    facts: [`${KNOWLEDGE_KINDS[entry.kind]}${entry.title ? `: ${entry.title}` : ''}`, `${platformName(entry.platform)} · ${entry.active ? 'active' : 'inactive'} · v${entry.version}`, clip(entry.text, 300)],
+    used,
+    usedText: `${used} post${used === 1 ? '' : 's'}, draft${used === 1 ? '' : 's'} or suggestion${used === 1 ? '' : 's'} used this ${KNOWLEDGE_KINDS[entry.kind].toLowerCase()}.`,
+    action: `/knowledge/${entry.id}/delete`,
+    back: `/knowledge/${entry.id}`,
+  });
+
+export const deleteSourcePage = (user, { source, snapshots, used }) =>
+  deletePage(user, {
+    title: 'Delete this source?',
+    what: `this source${snapshots ? ` and its ${snapshots} saved page version${snapshots === 1 ? '' : 's'}` : ''}`,
+    facts: [source.url, `${SOURCE_KINDS[source.kind] ?? source.kind} · ${source.active ? 'active' : 'inactive'}`],
+    used,
+    usedText: `${used} post${used === 1 ? '' : 's'}, draft${used === 1 ? '' : 's'} or suggestion${used === 1 ? '' : 's'} used a saved version of this page.`,
+    action: `/sources/${source.id}/delete`,
+    back: '/sources',
+  });
 
 // ---------- admin: weekly suggestions ----------
 

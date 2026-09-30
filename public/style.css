@@ -191,3 +191,9 @@ button.switch:disabled { opacity: 0.6; cursor: not-allowed; }
 .content table { margin: 16px 0; }
 .content caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
 .content .source { font-size: 0.9rem; color: var(--muted); }
+
+/* Deleting: a red link to the confirmation page, and the typed confirmation */
+a.danger { color: #b3261e; margin-left: 8px; }
+.danger-zone { border-color: #e6b3ae; }
+button.danger { background: #b3261e; border-color: #b3261e; }
+.facts { padding-left: 18px; }

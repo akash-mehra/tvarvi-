@@ -314,6 +314,52 @@ const MIGRATIONS = [
   DROP TABLE knowledge;
   ALTER TABLE knowledge_new RENAME TO knowledge;
   `,
+  `
+  -- One-off fix of Training rules and Sources pasted from the September 2026 rules file under the wrong type, platform
+  -- or kind. Only entries whose title or link is exactly the file's are moved to where the file puts them; whether
+  -- they are active is left alone, and each change is written to the audit log.
+  CREATE TEMP TABLE setup_rules (title TEXT PRIMARY KEY, kind TEXT NOT NULL, platform TEXT);
+  INSERT INTO setup_rules VALUES
+    ('evidence and numbers', 'compliance_rule', NULL), ('claim language', 'compliance_rule', NULL),
+    ('medicines, supplements, ayurveda, yoga and diet', 'compliance_rule', NULL), ('indian law', 'compliance_rule', NULL),
+    ('sensitivity', 'compliance_rule', NULL), ('positioning', 'compliance_rule', NULL),
+    ('title, keyword and names', 'compliance_rule', 'website'), ('takeaways, coined concept, chapters and faqs', 'compliance_rule', 'website'),
+    ('pictures and tables', 'compliance_rule', 'website'), ('calls to action', 'compliance_rule', 'website'),
+    ('tvarvi pages and calls to action', 'compliance_rule', 'website'), ('voice and style', 'brand_rule', 'website');
+  CREATE TEMP TABLE setup_fixes AS
+    SELECT k.id, v.title, k.kind AS old_kind, k.platform AS old_platform, s.kind, s.platform
+    FROM knowledge k JOIN knowledge_versions v ON v.id = k.current_version_id JOIN setup_rules s ON s.title = lower(trim(v.title))
+    WHERE k.kind != 'example' AND (k.kind != s.kind OR k.platform IS NOT s.platform);
+  INSERT INTO audit (action, detail)
+    SELECT 'setup_fixed', 'Rule #' || id || ' "' || title || '": ' || replace(old_kind, '_', ' ') || ', ' || COALESCE(old_platform, 'all platforms')
+      || ' → ' || replace(kind, '_', ' ') || ', ' || COALESCE(platform, 'all platforms') FROM setup_fixes;
+  UPDATE knowledge SET kind = (SELECT kind FROM setup_fixes f WHERE f.id = knowledge.id),
+    platform = (SELECT platform FROM setup_fixes f WHERE f.id = knowledge.id)
+    WHERE id IN (SELECT id FROM setup_fixes);
+
+  CREATE TEMP TABLE setup_sources (url TEXT PRIMARY KEY, kind TEXT NOT NULL);
+  INSERT INTO setup_sources VALUES
+    ('https://who.int/', 'research'), ('https://icmr.gov.in/', 'research'), ('https://mohfw.gov.in/', 'research'),
+    ('https://nhm.gov.in/', 'research'), ('https://fssai.gov.in/', 'research'), ('https://monash.edu/', 'research'),
+    ('https://fogsi.org/', 'research'), ('https://aiims.edu/', 'research'), ('https://pgimer.edu.in/', 'research'),
+    ('https://pubmed.ncbi.nlm.nih.gov/', 'research'), ('https://pmc.ncbi.nlm.nih.gov/', 'research'),
+    ('https://cochranelibrary.com/', 'research'), ('https://thelancet.com/', 'research'), ('https://endocrine.org/', 'research'),
+    ('https://eshre.eu/', 'research'), ('https://asrm.org/', 'research'), ('https://acog.org/', 'research'),
+    ('https://nice.org.uk/', 'research'), ('https://nhs.uk/', 'research'),
+    ('https://indiankanoon.org/doc/358950/', 'compliance'), ('https://www.pib.gov.in/PressReleasePage.aspx?PRID=1832906', 'compliance'),
+    ('https://www.newsonair.gov.in/centre-releases-additional-guidelines-for-health-and-wellness-celebrities-and-influencers', 'compliance');
+  INSERT INTO audit (action, detail)
+    SELECT 'setup_fixed', 'Source #' || src.id || ' ' || src.url || ': ' || src.kind || ' → ' || s.kind
+    FROM sources src JOIN setup_sources s ON s.url = src.url WHERE src.kind != s.kind;
+  -- A page that is no longer a compliance page has nothing waiting for approval.
+  UPDATE snapshots SET status = 'superseded' WHERE status = 'pending' AND source_id IN
+    (SELECT src.id FROM sources src JOIN setup_sources s ON s.url = src.url WHERE src.kind = 'compliance' AND s.kind != 'compliance');
+  UPDATE sources SET kind = (SELECT kind FROM setup_sources s WHERE s.url = sources.url)
+    WHERE url IN (SELECT url FROM setup_sources s WHERE s.kind != sources.kind);
+  DROP TABLE setup_rules;
+  DROP TABLE setup_fixes;
+  DROP TABLE setup_sources;
+  `,
 ];
 
 // Foreign keys are off while migrating (SQLite's documented way to rebuild a table) and checked before each commit.

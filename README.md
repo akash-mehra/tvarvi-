@@ -55,6 +55,7 @@ Each agent's model is set with an environment variable:
 - **Brand rules** and **compliance rules**, for all platforms, for the **website article** only, or for one social platform. Add the brand voice guide as one brand rule titled "Voice guide". Required disclaimers and banned claims work well as separate compliance rules. Rules that only make sense for the blog (its shape, a voice with no hashtags or emoji, its calls to action) go on **Website article**, so the post writers never see them; the article agent and the final audit read those plus the all-platform rules.
 - **Example posts per platform**, with optional likes, shares and reach. The best 3 go into every writer prompt.
 - **Versions:** editing creates a new version and old versions are kept. You can deactivate, reactivate, or **roll back** to any earlier version, which saves it as a new version. Each version shows which posts used it.
+- **Deleting** a rule or example (for example one saved under the wrong type or platform) takes typing `delete` on its confirmation page, and removes it with all its versions. Anything a post, draft or suggestion used can't be deleted, because it stays in that record: deactivate it instead. The audit log keeps a note of each deletion.
 - **Promote to example:** a button on any ready or published social post. **Save engagement** on published posts records likes, shares, reach and saves; top posts are ranked by reach + 10 × shares + 3 × likes.
 - The page also shows the **measured AI cost and time** for the last 7 days, per agent and model, and the audit log. Each call is priced at its own model's list price. The price table in `ai.js` was checked in September 2026; update it if prices change.
 
@@ -68,6 +69,7 @@ Each agent's model is set with an environment variable:
   - Fetching blocks private and internal addresses, re-checks every redirect against the allowlist, and stops after 2 MB or 15 seconds.
 - **Trends sources** set the only domains the trend scout may search or open. Trending keywords are used only where they fit the article's facts.
 - **Research sites** are the only medical sites the article agent may search, open and cite. A site covers its subdomains: `https://nih.gov` allows every `*.nih.gov` site, while `https://www.nhs.uk` allows only `www.nhs.uk`.
+- **Deleting** a source works the same way: type `delete` to confirm. It removes the source and its saved page versions, unless a post or draft was checked against one of them.
 
 ### Weekly suggestions (admin → Suggestions)
 
