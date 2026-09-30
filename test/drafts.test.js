@@ -58,7 +58,7 @@ test('a writer drafts an article with the agent, checks it and submits it into t
   await addUser({ name: 'Otto Other', email: 'other@example.com', can_write: 1 }, PASSWORD);
   const reviewerId = await addUser({ name: 'Rae Reviewer', email: 'reviewer@example.com', can_review: 1 }, PASSWORD);
   await addUser({ name: 'Pia Plain', email: 'plain@example.com' }, PASSWORD);
-  run(`UPDATE users SET sign_name = 'Dr. Rae', sign_credentials = 'MBBS' WHERE can_review = 1`);
+  run(`UPDATE users SET sign_name = 'Dr. Rae', sign_credentials = 'MBBS', sign_photo = 'photo.jpg' WHERE can_review = 1`);
   const [admin, writer, other, reviewer, plain] = await Promise.all(['admin', 'writer', 'other', 'reviewer', 'plain'].map((r) => login(`${r}@example.com`)));
 
   await t.test('drafting needs Research sites, which only admins add', async () => {

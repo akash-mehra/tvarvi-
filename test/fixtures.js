@@ -168,3 +168,17 @@ export function glassProblems(deck, fonts = ['Inter']) {
   });
   return problems;
 }
+
+// A phone photo: a JPEG with an EXIF segment saying where it was taken, and a second picture after the image's end.
+export function phonePhoto() {
+  const plain = jpeg(600, 600);
+  return Buffer.concat([plain.subarray(0, 2), Buffer.from('ffe1000e4578696600004750533a3238', 'hex'), plain.subarray(2), Buffer.from('GPS 28.6N')]);
+}
+
+// A form with files as a browser sends it: [body, content type]. Blob values are files.
+export async function multipart(fields) {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) form.append(name, value);
+  const encoded = new Request('http://encode.test', { method: 'POST', body: form });
+  return [Buffer.from(await encoded.arrayBuffer()), encoded.headers.get('content-type')];
+}

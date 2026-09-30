@@ -159,6 +159,7 @@ summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .finals, .strip { display: flex; flex-wrap: wrap; gap: 8px; }
 .finals figure { margin: 0; width: 160px; font-size: 0.85rem; }
 .finals img, .strip img { width: 160px; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+img.avatar { width: 96px; height: 96px; object-fit: cover; border-radius: 50%; border: 1px solid var(--line); }
 .strip img { width: 64px; }
 .pass { color: var(--add-text); }
 .fail { color: var(--del-text); }

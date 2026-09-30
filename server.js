@@ -14,7 +14,7 @@ import {
 import { runDigest } from './coach.js';
 import { all, audit, logEvent, one, recoverInterrupted, run, tx, UPLOADS } from './db.js';
 import { imageType } from './gemini.js';
-import { EXT, makePictures, parsePictures } from './pictures.js';
+import { cleanPhoto, EXT, makePictures, parsePictures } from './pictures.js';
 import { BASE, backLink, count, fail, field, GLASS, HttpError, oneOf, readForm, redirect, sameOrigin, SECURE, send, toId } from './http.js';
 import { createEntry, latestMetrics } from './knowledge.js';
 import { publishItem } from './publish.js';
@@ -25,6 +25,7 @@ import * as view from './views.js';
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const LOCK_MS = 15 * 60 * 1000;
 const IMAGE_LIMIT = 8 * 1024 * 1024;
+const PHOTO_LIMIT = 2 * 1024 * 1024; // a signature photo
 const SLIDES_LIMIT = 40 * 1024 * 1024; // one upload of finished carousel slides
 const FLAGS = ['is_admin', 'can_write', 'can_review', 'can_publish'];
 const EDITABLE = ['draft', 'failed', 'ready', 'publish_failed'];
@@ -335,13 +336,13 @@ async function articleAction({ req, res, user, params: [id] }) {
     const changed = title !== noEmDashes(a.title) || body !== noEmDashes(a.body);
     if (action === 'approve') {
       if (changed) fail(400, 'You changed the text, so use "Send to admin" and the admin will see your changes.');
-      if (!user.sign_name) fail(400, 'Add your signing details first: click your name at the top right.');
-      // The doctor's signature goes on the article; the AI audit is only reported, never a condition.
+      if (!user.sign_name || !user.sign_photo) fail(400, 'Add your signing details and photo first: click your name at the top right.');
+      // The doctor's signature and photo go on the article; the AI audit is only reported, never a condition.
       const signature = `${user.sign_name}, ${user.sign_credentials}`;
       const pictures = process.env.GEMINI_API_KEY && pictureBlocks(body).length ? 'generating' : 'ready';
       const [websiteId, itemIds] = tx(() => {
-        updateArticle(a, `UPDATE articles SET status = 'approved', title = ?, body = ?, signature = ?, signed_at = CURRENT_TIMESTAMP, note = NULL`,
-          title, body, signature);
+        updateArticle(a, `UPDATE articles SET status = 'approved', title = ?, body = ?, signature = ?, signature_photo = ?, signed_at = CURRENT_TIMESTAMP, note = NULL`,
+          title, body, signature, user.sign_photo);
         const website = run(`INSERT INTO items (article_id, channel, status) VALUES (?, 'website', ?)`, a.id, pictures).lastInsertRowid;
         logEvent(a.id, user.id, 'approved', `signed by ${signature}; ${auditLine(a, title, body)}`);
         return [website, SOCIAL.map((channel) =>
@@ -809,19 +810,41 @@ async function changePassword(ctx) {
   accountPage(ctx, 'Password changed. Other devices were logged out.');
 }
 
-// A reviewer's signing details, as they appear on every article they approve: "Dr. Mehra, MBBS, PGIMS Rohtak".
+// A reviewer's signing details, as they appear on every article they approve: "Dr. Mehra, MBBS, PGIMS Rohtak", with
+// their photo. The photo is public (the website shows it) under a random name; a replaced one goes unless an article has it.
 async function saveSignature(ctx) {
   const { req, user } = ctx;
   if (!user.can_review) fail(403, 'Only reviewers sign articles.');
-  const form = await readForm(req);
+  const form = await readForm(req, PHOTO_LIMIT + 64 * 1024);
   const [name, credentials] = [['sign_name', 'Name', 100], ['sign_credentials', 'Qualifications', 150]].map(([key, label, max]) => {
     const value = noEmDashes(field(form, key, label, max).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' '));
     if (value.length < 2) fail(400, `${label} is too short.`);
     return value;
   });
-  run('UPDATE users SET sign_name = ?, sign_credentials = ? WHERE id = ?', name, credentials, user.id);
-  audit(user.id, 'signature_saved', `${name}, ${credentials}`);
-  accountPage({ ...ctx, user: { ...user, sign_name: name, sign_credentials: credentials } },
+  const file = form.get('photo');
+  let photo = user.sign_photo;
+  if (file instanceof File && file.size) {
+    if (file.size > PHOTO_LIMIT) fail(413, 'The photo must be 2 MB or smaller.');
+    const clean = cleanPhoto(Buffer.from(await file.arrayBuffer())) ?? fail(400, 'The photo must be a JPEG or PNG image.');
+    photo = `${randomUUID()}.${EXT[clean.type]}`;
+    await writeFile(join(UPLOADS, photo), clean.bytes, { flag: 'wx' });
+  }
+  if (!photo) fail(400, 'Add your photo: the website shows it with your signature.');
+  try {
+    tx(() => {
+      run('UPDATE users SET sign_name = ?, sign_credentials = ?, sign_photo = ? WHERE id = ?', name, credentials, photo, user.id);
+      // Articles they signed before photos were asked for take this one.
+      run('UPDATE articles SET signature_photo = ? WHERE reviewer_id = ? AND signature IS NOT NULL AND signature_photo IS NULL', photo, user.id);
+    });
+  } catch (err) {
+    if (photo !== user.sign_photo) await unlink(join(UPLOADS, photo)).catch(() => {});
+    throw err;
+  }
+  if (user.sign_photo && photo !== user.sign_photo && !one('SELECT 1 FROM articles WHERE signature_photo = ?', user.sign_photo)) {
+    await unlink(join(UPLOADS, user.sign_photo)).catch(() => {});
+  }
+  audit(user.id, 'signature_saved', `${name}, ${credentials}${photo === user.sign_photo ? '' : ', with a new photo'}`);
+  accountPage({ ...ctx, user: { ...user, sign_name: name, sign_credentials: credentials, sign_photo: photo } },
     'Signing details saved. They appear on every article you approve from now on.');
 }
 
@@ -920,7 +943,7 @@ export async function handler(req, res) {
     user = currentUser(req);
     if (!isPublic && !user) return redirect(res, '/login');
     // Reviewers sign the articles they approve, so a reviewer adds signing details before doing anything else.
-    if (!isPublic && user.can_review && !user.sign_name && !SIGNING.has(route)) return redirect(res, '/account');
+    if (!isPublic && user.can_review && !(user.sign_name && user.sign_photo) && !SIGNING.has(route)) return redirect(res, '/account');
     await route({ req, res, user, params: pathname.match(pattern).slice(1) });
   } catch (err) {
     if (!(err instanceof HttpError)) console.error(err);

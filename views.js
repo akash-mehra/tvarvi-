@@ -249,7 +249,7 @@ const reviewForm = (a, user) => html`<form method="post" action="/articles/${a.i
     <button name="action" value="send_to_admin" class="secondary">Send to admin (changes or second opinion)</button>
     <button name="action" value="approve">Approve with no changes: ready to publish</button>
   </div>
-  <p class="muted">Approving signs the article as <strong>${user.sign_name ?? ''}, ${user.sign_credentials ?? ''}</strong>, with today's date. The website shows it as "Medically reviewed by".</p>
+  <p class="muted">Approving signs the article as <strong>${user.sign_name ?? ''}, ${user.sign_credentials ?? ''}</strong>, with today's date. The website shows it, with your photo, as "Medically reviewed by".</p>
 </form>`;
 
 const EDITABLE = ['draft', 'failed', 'ready', 'publish_failed'];
@@ -472,11 +472,13 @@ export const accountPage = (user, message) =>
 ${message ? html`<p class="ok">${message}</p>` : ''}
 ${user.can_review
     ? html`<h2>Signing details</h2>
-${user.sign_name ? '' : html`<p class="warn">You review articles, and the articles you approve carry your signature. Add your signing details to continue.</p>`}
-<form method="post" action="/account/signature" class="stack narrow">
+${user.sign_name && user.sign_photo ? '' : html`<p class="warn">You review articles, and the articles you approve carry your signature and photo. Add your signing details and photo to continue.</p>`}
+<form method="post" action="/account/signature" enctype="multipart/form-data" class="stack narrow">
   <label>Name as it appears on articles <input name="sign_name" required minlength="2" maxlength="100" value="${user.sign_name ?? ''}" placeholder="Dr. Mehra"></label>
   <label>Qualifications <input name="sign_credentials" required minlength="2" maxlength="150" value="${user.sign_credentials ?? ''}" placeholder="MBBS, PGIMS Rohtak"></label>
-  <p class="muted">Articles you approve show "Medically reviewed by: ${user.sign_name || 'Dr. Mehra'}, ${user.sign_credentials || 'MBBS, PGIMS Rohtak'}" and the date. Articles already approved keep the details they were signed with.</p>
+  ${user.sign_photo ? html`<img class="avatar" src="/media/${user.sign_photo}" alt="Your photo, as the website shows it" width="96" height="96">` : ''}
+  <label>${user.sign_photo ? 'New photo' : 'Photo'} (JPEG or PNG, at most 2 MB; its location and camera details are removed) <input type="file" name="photo" accept="image/jpeg,image/png"${user.sign_photo ? '' : raw(' required')}></label>
+  <p class="muted">Articles you approve show your photo with "Medically reviewed by: ${user.sign_name || 'Dr. Mehra'}, ${user.sign_credentials || 'MBBS, PGIMS Rohtak'}" and the date. Articles already approved keep the details they were signed with.</p>
   <button>Save signing details</button>
 </form>`
     : ''}

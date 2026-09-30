@@ -6,7 +6,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { callClaude, describe, MODEL, neutralize, parseJson, RefusalError } from './ai.js';
 import { logEvent, one, run, UPLOADS } from './db.js';
-import { gemini, PictureError } from './gemini.js';
+import { gemini, imageType, PictureError } from './gemini.js';
 import { clip, pictureBlocks } from './text.js';
 
 export const LIMITS = {
@@ -17,6 +17,34 @@ export const LIMITS = {
 const RATIO = '16:9';
 const PICTURE_TOKENS = 1120; // output tokens of a 1K picture, if Gemini doesn't report them
 export const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+
+// A doctor's signature photo as the website gets it: a JPEG or PNG without what can tell where and on what it was taken
+// (JPEG's EXIF, XMP and IPTC segments and anything after the image, PNG's EXIF and text chunks). Null if it is neither,
+// or damaged.
+export function cleanPhoto(bytes) {
+  const type = imageType(bytes);
+  const keep = [bytes.subarray(0, type === 'image/png' ? 8 : 2)];
+  if (type === 'image/jpeg') {
+    let p = 2;
+    let frame = false;
+    for (; p + 4 <= bytes.length && bytes[p] === 0xff && bytes[p + 1] !== 0xda; p += 2 + bytes.readUInt16BE(p + 2)) {
+      const marker = bytes[p + 1];
+      frame ||= marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+      if (marker !== 0xe1 && marker !== 0xed) keep.push(bytes.subarray(p, p + 2 + bytes.readUInt16BE(p + 2)));
+    }
+    const end = bytes.indexOf(Buffer.from([0xff, 0xd9]), p); // scan data escapes FF bytes, so the first FF D9 ends the image
+    if (!frame || bytes[p] !== 0xff || bytes[p + 1] !== 0xda || end < 0) return null;
+    keep.push(bytes.subarray(p, end + 2));
+    return { bytes: Buffer.concat(keep), type };
+  }
+  if (type !== 'image/png' || bytes.toString('latin1', 12, 16) !== 'IHDR') return null;
+  for (let p = 8; p + 12 <= bytes.length; p += 12 + bytes.readUInt32BE(p)) {
+    const chunk = bytes.toString('latin1', p + 4, p + 8);
+    if (!['eXIf', 'tEXt', 'zTXt', 'iTXt'].includes(chunk)) keep.push(bytes.subarray(p, p + 12 + bytes.readUInt32BE(p)));
+    if (chunk === 'IEND') return { bytes: Buffer.concat(keep), type };
+  }
+  return null;
+}
 export const PROBLEMS = {
   text: 'Text in the picture',
   medical: 'Misleading medical picture',

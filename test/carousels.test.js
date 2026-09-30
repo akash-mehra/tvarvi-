@@ -97,7 +97,7 @@ test('a reviewer turns the Instagram post into a carousel, designs it in Glass S
   const reviewerId = await addUser({ name: 'Rae Reviewer', email: 'reviewer@example.com', can_review: 1 }, PASSWORD);
   await addUser({ name: 'Oli Other', email: 'other@example.com', can_review: 1 }, PASSWORD);
   await addUser({ name: 'Pat Publisher', email: 'publisher@example.com', can_publish: 1 }, PASSWORD);
-  run(`UPDATE users SET sign_name = 'Dr. Rae', sign_credentials = 'MBBS' WHERE can_review = 1`);
+  run(`UPDATE users SET sign_name = 'Dr. Rae', sign_credentials = 'MBBS', sign_photo = 'photo.jpg' WHERE can_review = 1`);
   const [admin, writer, reviewer, other, publisher] = await Promise.all(['admin', 'writer', 'reviewer', 'other', 'publisher'].map((r) => login(`${r}@example.com`)));
 
   assert.equal((await post(writer, '/articles', { title: 'Iron and energy', body: 'Iron matters.\n\nEat leafy greens.' })).status, 303);
